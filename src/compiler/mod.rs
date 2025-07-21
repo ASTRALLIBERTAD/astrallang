@@ -7,3 +7,4 @@ pub mod semantic;
 pub mod arm64;
 pub mod wasm;
 pub mod llvm;
+pub mod value;

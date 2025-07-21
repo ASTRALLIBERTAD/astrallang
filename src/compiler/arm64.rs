@@ -43,23 +43,15 @@ impl ARM64Generator {
         asm.push_str("    mov x29, sp\n");
 
 
-        // Exit system call for Android
-        asm.push_str("    mov x8, #93      // sys_exit\n");
-        asm.push_str("    mov x0, #0       // exit status\n");
-        asm.push_str("    svc #0           // system call\n");
-
         // Generate function body
         for stmt in &func.body {
             asm.push_str(&self.generate_stmt(stmt));
         }
         
         // Exit system call for Android
-        // Exit system call for Android
         asm.push_str("    mov x8, #93      // sys_exit\n");
         asm.push_str("    mov x0, #0       // exit status\n");
         asm.push_str("    svc #0           // system call\n");
-
-        
 
         // Add data section for print buffer
         asm.push_str("\n.section .data\n");

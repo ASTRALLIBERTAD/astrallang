@@ -3,6 +3,7 @@ pub enum Token {
     // Literals
     Number(i64),
     Ident(String),
+    String(String),
     
     // Keywords
     Let,
@@ -38,6 +39,8 @@ pub enum Token {
     
     // Special
     EOF,
+
+    Quatation, // For string literals
 }
 
 impl std::fmt::Display for Token {
@@ -45,6 +48,7 @@ impl std::fmt::Display for Token {
         match self {
             Token::Number(n) => write!(f, "Number({})", n),
             Token::Ident(s) => write!(f, "Ident({})", s),
+            Token::String(s) => write!(f, "\"{}\"", s),
             Token::Let => write!(f, "let"),
             Token::Fn => write!(f, "fn"),
             Token::If => write!(f, "if"),
@@ -72,6 +76,7 @@ impl std::fmt::Display for Token {
             Token::Semicolon => write!(f, ";"),
             Token::Comma => write!(f, ","),
             Token::EOF => write!(f, "EOF"),
+            Token::Quatation => write!(f, "\""),
         }
     }
 }
@@ -180,20 +185,39 @@ impl Lexer {
             '}' => Ok(Some(Token::RBrace)),
             ';' => Ok(Some(Token::Semicolon)),
             ',' => Ok(Some(Token::Comma)),
+            
             '"' => {
-                // Skip string literals for now - just consume until closing quote
+                let mut string = String::new();
                 while !self.is_at_end() && self.current_char() != '"' {
-                    if self.current_char() == '\n' {
-                        self.line += 1;
-                        self.column = 0;
-                    }
+                    string.push(self.current_char());
                     self.advance();
                 }
-                if !self.is_at_end() {
-                    self.advance(); // consume closing quote
+                if self.is_at_end() {
+                    return Err(LexError {
+                        message: "Unterminated string literal".to_string(),
+                        line: self.line,
+                        column: self.column,
+                    });
                 }
-                self.next_token() // Skip strings for now
+                self.advance(); // consume closing "
+                Ok(Some(Token::String(string)))
             },
+
+
+                // Ok(Some(Token::Quatation))
+                // Skip string literals for now - just consume until closing quote
+                // while !self.is_at_end() && self.current_char() != '"' {
+                //     if self.current_char() == '\n' {
+                //         self.line += 1;
+                //         self.column = 0;
+                //     }
+                //     self.advance();
+                // }
+                // if !self.is_at_end() {
+                //     self.advance(); // consume closing quote
+                // }
+                // self.next_token() // Skip strings for now
+            
             '\'' => {
                 // Skip character literals for now - just consume until closing quote
                 while !self.is_at_end() && self.current_char() != '\'' {

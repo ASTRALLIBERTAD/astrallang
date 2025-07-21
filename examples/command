@@ -3,32 +3,18 @@ cargo run examples/hello.astral --compile --llvm
 
 clang --target=aarch64-linux-android35 -fPIE -pie examples\hello.ll -o examples\hii
 
+opt -O2 examples/hello.ll -S -o examples/hello_optimized.ll
+
+
 arm64
 cargo run --release -- examples/hello.astral --compile --android
 aarch64-linux-android35-clang examples/hello.s -nostdlib -o examples/hello
 
 
+interpreter
+cargo run examples/hello.astral --compile --interpreter
+
 adb push examples\hii /data/local/tmp/hii
 adb shell
 >> cd /data/local/tmp
 >> chmod +x hii
-
-
-; Optimized LLVM IR for Astral language
-target triple = "aarch64-linux-android"
-
-declare i32 @printf(i8*, ...)
-declare void @exit(i32)
-
-@fmt = private constant [5 x i8] c"%ld\0A\00"
-
-define i32 @main() {
-entry:
-    %0 = alloca i64
-    store i64 5, i64* %0
-    %1 = alloca i64
-    store i64 10, i64* %1
-    %2 = getelementptr [5 x i8], [5 x i8]* @fmt, i32 0, i32 0
-    call i32 (i8*, ...) @printf(i8* %2, i64 50)
-    ret i32 0
-}

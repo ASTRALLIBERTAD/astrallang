@@ -26,6 +26,8 @@ pub enum Expr {
     BinaryOp(Box<Expr>, BinaryOperator, Box<Expr>),
     Call(String, Vec<Expr>),
     UnaryOp(UnaryOperator, Box<Expr>),
+    Bool(bool),
+    String(String),
 }
 
 #[derive(Clone, Debug)]

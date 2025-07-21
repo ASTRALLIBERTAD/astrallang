@@ -1,6 +1,17 @@
 fn main() {
     let x = 5;
     let y = 10;
-    
-    print(x * y );  
+
+    let q = 0;
+    if (5 > 10){
+        print(x * y);
+    }
+    else {
+        print(59);
+    }
+
+    while ( 10 == y) {
+        print("djj");
+    }
+      
 }

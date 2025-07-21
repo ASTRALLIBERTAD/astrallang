@@ -285,6 +285,7 @@ impl Parser {
         match self.next() {
             Token::Number(n) => Ok(Expr::Number(n)),
             Token::Ident(s) => Ok(Expr::Ident(s)),
+            Token::String(s) => Ok(Expr::String(s)),
             Token::LParen => {
                 let expr = self.parse_expr()?;
                 self.expect(Token::RParen)?;

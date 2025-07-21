@@ -208,8 +208,17 @@ impl LLVMGenerator {
                 let else_label = self.next_label();
                 let end_label = self.next_label();
                 
-                let branch_code = self.branch(&cond_value.to_llvm(), &then_label, &else_label);
-                self.emit(branch_code);
+                let cmp_reg = self.next_register();
+                self.emit(format!(
+                    "    {} = icmp ne i64 {}, 0\n",
+                    cmp_reg,
+                    cond_value.to_llvm()
+                ));
+                self.emit(format!(
+                    "    br i1 {}, label %{}, label %{}\n",
+                    cmp_reg, then_label, else_label
+                ));
+
                 
                 self.emit(format!("{}:\n", then_label));
                 for stmt in then_body {
@@ -428,4 +437,20 @@ impl LLVMGenerator {
         code.push_str(&format!("    br i1 {}, label %{}, label %{}\n", cmp_reg, then_label, else_label));
         code
     }
+
+    fn store_string_literal(&mut self, s: &str) -> String {
+        let name = format!("@.str{}", self.label_counter);
+        self.label_counter += 1;
+        let len = s.len() + 1;
+        let escaped = s.escape_default().to_string();
+        self.code_buffer.insert(
+            0,
+            format!(
+                "{} = private constant [{} x i8] c\"{}\\00\"\n",
+                name, len, escaped
+            ),
+        );
+        name
+    }
+
 }

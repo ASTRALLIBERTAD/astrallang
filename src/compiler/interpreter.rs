@@ -1,6 +1,8 @@
-use crate::compiler::ast::*;
+use crate::compiler::{self, ast::*};
 use std::collections::HashMap;
 use std::fmt;
+use crate::compiler::value::Value;
+
 
 #[derive(Debug)]
 pub struct RuntimeError {
@@ -20,7 +22,7 @@ pub struct FunctionDef {
 }
 
 pub struct Interpreter {
-    globals: HashMap<String, i64>,
+    globals: HashMap<String, Value>,
     functions: HashMap<String, FunctionDef>,
 }
 
@@ -61,7 +63,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn run_block(&mut self, stmts: &[Stmt], env: &mut HashMap<String, i64>) -> Result<Option<i64>, RuntimeError> {
+    fn run_block(&mut self, stmts: &[Stmt], env: &mut HashMap<String, Value>) -> Result<Option<Value>, RuntimeError> {
         for stmt in stmts {
             match stmt {
                 Stmt::Let(name, expr) => {
@@ -70,18 +72,27 @@ impl Interpreter {
                 }
                 Stmt::Print(expr) => {
                     let val = self.eval_expr(expr, env)?;
-                    println!("{}", val);
+                    match val {
+                        Value::Number(n) => println!("{}", n),
+                        Value::Bool(b) => println!("{}", b),
+                        Value::Str(s) => println!("{}", s),
+                        Value::Null => println!("null"),
+                    }
                 }
                 Stmt::Return(Some(expr)) => {
                     let val = self.eval_expr(expr, env)?;
                     return Ok(Some(val));
                 }
                 Stmt::Return(None) => {
-                    return Ok(Some(0));
+                    return Ok(Some(Value::Number(0)));
                 }
                 Stmt::If(condition, then_body, else_body) => {
                     let cond_val = self.eval_expr(condition, env)?;
-                    if cond_val != 0 {
+                    if match cond_val {
+                        Value::Bool(true) => true,
+                        Value::Number(n) => n != 0,
+                        _ => false,
+                    } {
                         if let Some(ret) = self.run_block(then_body, env)? {
                             return Ok(Some(ret));
                         }
@@ -92,7 +103,14 @@ impl Interpreter {
                     }
                 }
                 Stmt::While(condition, body) => {
-                    while self.eval_expr(condition, env)? != 0 {
+                    while {
+                        let cond_val = self.eval_expr(condition, env)?;
+                        match cond_val {
+                            Value::Bool(b) => b,
+                            Value::Number(n) => n != 0,
+                            _ => false,
+                        }
+                    } {
                         if let Some(ret) = self.run_block(body, env)? {
                             return Ok(Some(ret));
                         }
@@ -109,55 +127,79 @@ impl Interpreter {
         Ok(None)
     }
 
-    fn eval_expr(&mut self, expr: &Expr, env: &HashMap<String, i64>) -> Result<i64, RuntimeError> {
+    fn eval_expr(&mut self, expr: &Expr, env: &HashMap<String, Value>) -> Result<Value, RuntimeError> {
         match expr {
-            Expr::Number(n) => Ok(*n),
+            Expr::Number(n) => Ok(compiler::value::Value::Number(*n)),
             Expr::Ident(name) => {
                 env.get(name)
-                    .or_else(|| self.globals.get(name))
-                    .copied()
+                    .cloned()
                     .ok_or_else(|| RuntimeError {
                         message: format!("Undefined variable: {}", name),
                     })
             }
+            Expr::String(s) => Ok(Value::Str(s.clone())),
             Expr::BinaryOp(lhs, op, rhs) => {
                 let left = self.eval_expr(lhs, env)?;
                 let right = self.eval_expr(rhs, env)?;
+                use BinaryOperator::*;
+                use Value::*;
+
                 match op {
-                    BinaryOperator::Add => Ok(left + right),
-                    BinaryOperator::Subtract => Ok(left - right),
-                    BinaryOperator::Multiply => Ok(left * right),
-                    BinaryOperator::Divide => {
-                        if right == 0 {
-                            Err(RuntimeError {
-                                message: "Division by zero".to_string(),
-                            })
-                        } else {
-                            Ok(left / right)
-                        }
-                    }
-                    BinaryOperator::Modulo => {
-                        if right == 0 {
-                            Err(RuntimeError {
-                                message: "Modulo by zero".to_string(),
-                            })
-                        } else {
-                            Ok(left % right)
-                        }
-                    }
-                    BinaryOperator::Equal => Ok(if left == right { 1 } else { 0 }),
-                    BinaryOperator::NotEqual => Ok(if left != right { 1 } else { 0 }),
-                    BinaryOperator::Less => Ok(if left < right { 1 } else { 0 }),
-                    BinaryOperator::Greater => Ok(if left > right { 1 } else { 0 }),
-                    BinaryOperator::LessEqual => Ok(if left <= right { 1 } else { 0 }),
-                    BinaryOperator::GreaterEqual => Ok(if left >= right { 1 } else { 0 }),
+                    Add => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Number(a + b)),
+                        (Str(a), Str(b)) => Ok(Str(a + &b)),
+                        _ => Err(RuntimeError { message: "Type error: unsupported operands for '+'".into() }),
+                    },
+                    Subtract => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Number(a - b)),
+                        _ => Err(RuntimeError { message: "Type error: '-' only supports numbers".into() }),
+                    },
+                    Multiply => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Number(a * b)),
+                        _ => Err(RuntimeError { message: "Type error: '*' only supports numbers".into() }),
+                    },
+                    Divide => match (left, right) {
+                        (Number(_), Number(0)) => Err(RuntimeError { message: "Division by zero".into() }),
+                        (Number(a), Number(b)) => Ok(Number(a / b)),
+                        _ => Err(RuntimeError { message: "Type error: '/' only supports numbers".into() }),
+                    },
+                    Modulo => match (left, right) {
+                        (Number(_), Number(0)) => Err(RuntimeError { message: "Modulo by zero".into() }),
+                        (Number(a), Number(b)) => Ok(Number(a % b)),
+                        _ => Err(RuntimeError { message: "Type error: '%' only supports numbers".into() }),
+                    },
+                    Equal => Ok(Bool(left == right)),
+                    NotEqual => Ok(Bool(left != right)),
+                    Less => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Bool(a < b)),
+                        _ => Err(RuntimeError { message: "Type error: '<' only supports numbers".into() }),
+                    },
+                    Greater => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Bool(a > b)),
+                        _ => Err(RuntimeError { message: "Type error: '>' only supports numbers".into() }),
+                    },
+                    LessEqual => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Bool(a <= b)),
+                        _ => Err(RuntimeError { message: "Type error: '<=' only supports numbers".into() }),
+                    },
+                    GreaterEqual => match (left, right) {
+                        (Number(a), Number(b)) => Ok(Bool(a >= b)),
+                        _ => Err(RuntimeError { message: "Type error: '>=' only supports numbers".into() }),
+                    },
                 }
             }
+
             Expr::UnaryOp(op, expr) => {
                 let val = self.eval_expr(expr, env)?;
                 match op {
-                    UnaryOperator::Minus => Ok(-val),
-                    UnaryOperator::Not => Ok(if val == 0 { 1 } else { 0 }),
+                    UnaryOperator::Minus => {
+                        if let Value::Number(n) = val {
+                            Ok(Value::Number(-n))
+                        } else {
+                            Err(RuntimeError { message: "Unary '-' applied to a non-number value".to_string() })
+                        }
+                    },
+                    UnaryOperator::Not => Ok(if val == compiler::value::Value::Number(0) { compiler::value::Value::Number(1) } else { compiler::value::Value::Number(0) }),
                 }
             }
             Expr::Call(name, args) => {
@@ -184,8 +226,15 @@ impl Interpreter {
                 
                 match self.run_block(&func.body, &mut local_env)? {
                     Some(val) => Ok(val),
-                    None => Ok(0), // Functions without explicit return return 0
+                    None => Ok(compiler::value::Value::Number(0)), // Functions without explicit return return 0
                 }
+            }
+
+            Expr::Bool(b) => {Ok(if *b { compiler::value::Value::Bool(true) } else { compiler::value::Value::Bool(false) })}
+            Expr::String(s) => {
+                // For simplicity, we just return the length of the string as its value
+                // In a real interpreter, you might want to handle strings differently
+                Ok(compiler::value::Value::Str(s.to_string()))
             }
         }
     }

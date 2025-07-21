@@ -9,6 +9,7 @@ use std::process;
 use std::fs;
 
 fn main() {
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: {} <source_file> [--compile]", args[0]);
@@ -93,6 +94,35 @@ fn main() {
                     process::exit(1);
                 }
                 println!("LLVM IR written to: {}", llvm_file);
+            }
+
+            if args.contains(&"--interpreter".to_string()) {
+                let code = std::fs::read_to_string("examples/hello.astral").expect("Failed to read source");
+
+                let mut lexer = Lexer::new(&code);
+                let tokens = match Lexer::tokenize(&mut lexer) {
+                    Ok(tokens) => tokens,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        process::exit(1);
+                    }
+                };
+                let mut parser = Parser::new(tokens);
+                let ast = match parser.parse() {
+                    Ok(ast) => ast,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        process::exit(1);
+                    }
+                };
+
+                
+                println!("{:#?}", ast);
+                let mut interpreter = Interpreter::new();
+                if let Err(e) = interpreter.run(&ast) {
+                    eprintln!("Interpreter error: {}", e);
+                    process::exit(1);
+                }
             }
         } else {
             eprintln!("No main function found for compilation");
