@@ -2,7 +2,5 @@ fn main() {
     let x = 5;
     let y = 10;
     
-        print(x * y + 9);
-    
-    
+    print(x * y );  
 }

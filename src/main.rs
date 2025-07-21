@@ -4,6 +4,7 @@ use compiler::lexer::Lexer;
 use compiler::parser::Parser;
 use compiler::interpreter::Interpreter;
 use compiler::codegen::generate_x86;
+use compiler::arm64::generate_arm64;
 use std::process;
 use std::fs;
 
@@ -51,7 +52,6 @@ fn main() {
     }
 
     if compile_mode {
-        // Compile to assembly
         if let Some(main_func) = ast.iter().find_map(|stmt| {
             if let compiler::ast::Stmt::Function(func) = stmt {
                 if func.name == "main" {
@@ -63,22 +63,39 @@ fn main() {
                 None
             }
         }) {
-            let asm_code = generate_x86(main_func);
-            let output_file = filename.replace(".astral", ".asm");
-            if let Err(e) = fs::write(&output_file, asm_code) {
-                eprintln!("Failed to write assembly file '{}': {}", output_file, e);
-                process::exit(1);
+            // Optional: emit ARM64 or x86 assembly
+            if args.contains(&"--android".to_string()) {
+                let asm_code = generate_arm64(main_func);
+                let output_file = filename.replace(".astral", ".s");
+                if let Err(e) = fs::write(&output_file, asm_code) {
+                    eprintln!("Failed to write ARM64 assembly: {}", e);
+                    process::exit(1);
+                }
+                println!("ARM64 assembly written to: {}", output_file);
+            } else {
+                let asm_code = generate_x86(main_func);
+                let output_file = filename.replace(".astral", ".asm");
+                if let Err(e) = fs::write(&output_file, asm_code) {
+                    eprintln!("Failed to write x86 assembly: {}", e);
+                    process::exit(1);
+                }
+                println!("x86 assembly written to: {}", output_file);
             }
-            println!("Assembly code written to: {}", output_file);
+
+            // 🔥 Now ALSO emit LLVM IR if requested
+            if args.contains(&"--llvm".to_string()) {
+                use compiler::llvm::generate_llvm;
+
+                let llvm_ir = generate_llvm(main_func);
+                let llvm_file = filename.replace(".astral", ".ll");
+                if let Err(e) = fs::write(&llvm_file, llvm_ir) {
+                    eprintln!("Failed to write LLVM IR file '{}': {}", llvm_file, e);
+                    process::exit(1);
+                }
+                println!("LLVM IR written to: {}", llvm_file);
+            }
         } else {
             eprintln!("No main function found for compilation");
-            process::exit(1);
-        }
-    } else {
-        // Interpret
-        let mut interpreter = Interpreter::new();
-        if let Err(e) = interpreter.run(&ast) {
-            eprintln!("{}", e);
             process::exit(1);
         }
     }
