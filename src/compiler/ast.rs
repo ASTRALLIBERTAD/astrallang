@@ -40,10 +40,24 @@ pub enum Stmt {
     While(Expr, Vec<Stmt>),
     Expression(Expr),
 }
+#[derive(Clone, Debug)]
+pub enum ParamType {
+    String,
+    Bool,
+    Number,
+    Any
+}
+
+#[derive(Clone, Debug)]
+pub struct Param {
+    pub name: String,
+    pub param_type: ParamType,
+    pub default_value: Option<Expr>,
+}
 
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
+    pub params: Vec<Param>,
     pub body: Vec<Stmt>,
-    pub(crate) params: Vec<String>,
 }

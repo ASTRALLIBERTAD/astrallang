@@ -1,9 +1,9 @@
-use crate::compiler::{self, ast::*};
+use crate::compiler::{self, ast::{self, *}};
 use std::collections::HashMap;
 use std::fmt;
 use crate::compiler::value::Value;
 
-
+// Represents a runtime error that can occur during interpretation
 #[derive(Debug)]
 pub struct RuntimeError {
     pub message: String,
@@ -15,12 +15,14 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+// Stores function parameters and body for later execution
 #[derive(Clone, Debug)]
 pub struct FunctionDef {
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
 }
 
+// The interpreter holds global variables and user-defined functions
 pub struct Interpreter {
     globals: HashMap<String, Value>,
     functions: HashMap<String, FunctionDef>,
@@ -35,17 +37,17 @@ impl Interpreter {
     }
 
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<(), RuntimeError> {
-        // First pass: collect function definitions
+        // First: collect all functions
         for stmt in stmts {
             if let Stmt::Function(func) = stmt {
                 self.functions.insert(func.name.clone(), FunctionDef {
-                    params: func.params.clone(),
+                    params: func.params.iter().map(|p| p.name.clone()).collect(),
                     body: func.body.clone(),
                 });
             }
         }
 
-        // Second pass: look for and execute main function
+        // Then: look for and run the "main" function
         if let Some(main_func) = self.functions.get("main").cloned() {
             if !main_func.params.is_empty() {
                 return Err(RuntimeError {
@@ -63,6 +65,7 @@ impl Interpreter {
         Ok(())
     }
 
+    // Executes a block of statements with local environment
     fn run_block(&mut self, stmts: &[Stmt], env: &mut HashMap<String, Value>) -> Result<Option<Value>, RuntimeError> {
         for stmt in stmts {
             match stmt {
@@ -72,27 +75,18 @@ impl Interpreter {
                 }
                 Stmt::Print(expr) => {
                     let val = self.eval_expr(expr, env)?;
-                    match val {
-                        Value::Number(n) => println!("{}", n),
-                        Value::Bool(b) => println!("{}", b),
-                        Value::Str(s) => println!("{}", s),
-                        Value::Null => println!("null"),
-                    }
+                    println!("{}", val.to_string());
                 }
                 Stmt::Return(Some(expr)) => {
                     let val = self.eval_expr(expr, env)?;
                     return Ok(Some(val));
                 }
                 Stmt::Return(None) => {
-                    return Ok(Some(Value::Number(0)));
+                    return Ok(Some(Value::Number(0))); // default return value
                 }
                 Stmt::If(condition, then_body, else_body) => {
                     let cond_val = self.eval_expr(condition, env)?;
-                    if match cond_val {
-                        Value::Bool(true) => true,
-                        Value::Number(n) => n != 0,
-                        _ => false,
-                    } {
+                    if cond_val.is_truthy() {
                         if let Some(ret) = self.run_block(then_body, env)? {
                             return Ok(Some(ret));
                         }
@@ -103,14 +97,7 @@ impl Interpreter {
                     }
                 }
                 Stmt::While(condition, body) => {
-                    while {
-                        let cond_val = self.eval_expr(condition, env)?;
-                        match cond_val {
-                            Value::Bool(b) => b,
-                            Value::Number(n) => n != 0,
-                            _ => false,
-                        }
-                    } {
+                    while self.eval_expr(condition, env)?.is_truthy() {
                         if let Some(ret) = self.run_block(body, env)? {
                             return Ok(Some(ret));
                         }
@@ -119,17 +106,23 @@ impl Interpreter {
                 Stmt::Expression(expr) => {
                     self.eval_expr(expr, env)?;
                 }
-                Stmt::Function(_) => {
-                    // Function definitions are handled in the first pass
-                }
+                Stmt::Function(_) => {} // already handled above
             }
         }
         Ok(None)
     }
 
+    // Evaluates expressions recursively
     fn eval_expr(&mut self, expr: &Expr, env: &HashMap<String, Value>) -> Result<Value, RuntimeError> {
+        use BinaryOperator::*;
+        use UnaryOperator::*;
+        use Value::*;
+
         match expr {
-            Expr::Number(n) => Ok(compiler::value::Value::Number(*n)),
+            Expr::Number(n) => Ok(Number(*n)),
+            Expr::Bool(b) => Ok(Bool(*b)),
+            Expr::String(s) => Ok(Str(s.clone())),
+
             Expr::Ident(name) => {
                 env.get(name)
                     .cloned()
@@ -137,54 +130,52 @@ impl Interpreter {
                         message: format!("Undefined variable: {}", name),
                     })
             }
-            Expr::String(s) => Ok(Value::Str(s.clone())),
+
             Expr::BinaryOp(lhs, op, rhs) => {
                 let left = self.eval_expr(lhs, env)?;
                 let right = self.eval_expr(rhs, env)?;
-                use BinaryOperator::*;
-                use Value::*;
 
                 match op {
                     Add => match (left, right) {
                         (Number(a), Number(b)) => Ok(Number(a + b)),
                         (Str(a), Str(b)) => Ok(Str(a + &b)),
-                        _ => Err(RuntimeError { message: "Type error: unsupported operands for '+'".into() }),
+                        _ => Err(RuntimeError { message: "'+' supports numbers or strings".into() }),
                     },
                     Subtract => match (left, right) {
                         (Number(a), Number(b)) => Ok(Number(a - b)),
-                        _ => Err(RuntimeError { message: "Type error: '-' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'-' only supports numbers".into() }),
                     },
                     Multiply => match (left, right) {
                         (Number(a), Number(b)) => Ok(Number(a * b)),
-                        _ => Err(RuntimeError { message: "Type error: '*' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'*' only supports numbers".into() }),
                     },
                     Divide => match (left, right) {
                         (Number(_), Number(0)) => Err(RuntimeError { message: "Division by zero".into() }),
                         (Number(a), Number(b)) => Ok(Number(a / b)),
-                        _ => Err(RuntimeError { message: "Type error: '/' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'/' only supports numbers".into() }),
                     },
                     Modulo => match (left, right) {
                         (Number(_), Number(0)) => Err(RuntimeError { message: "Modulo by zero".into() }),
                         (Number(a), Number(b)) => Ok(Number(a % b)),
-                        _ => Err(RuntimeError { message: "Type error: '%' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'%' only supports numbers".into() }),
                     },
                     Equal => Ok(Bool(left == right)),
                     NotEqual => Ok(Bool(left != right)),
                     Less => match (left, right) {
                         (Number(a), Number(b)) => Ok(Bool(a < b)),
-                        _ => Err(RuntimeError { message: "Type error: '<' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'<' only supports numbers".into() }),
                     },
                     Greater => match (left, right) {
                         (Number(a), Number(b)) => Ok(Bool(a > b)),
-                        _ => Err(RuntimeError { message: "Type error: '>' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'>' only supports numbers".into() }),
                     },
                     LessEqual => match (left, right) {
                         (Number(a), Number(b)) => Ok(Bool(a <= b)),
-                        _ => Err(RuntimeError { message: "Type error: '<=' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'<=' only supports numbers".into() }),
                     },
                     GreaterEqual => match (left, right) {
                         (Number(a), Number(b)) => Ok(Bool(a >= b)),
-                        _ => Err(RuntimeError { message: "Type error: '>=' only supports numbers".into() }),
+                        _ => Err(RuntimeError { message: "'>=' only supports numbers".into() }),
                     },
                 }
             }
@@ -192,50 +183,52 @@ impl Interpreter {
             Expr::UnaryOp(op, expr) => {
                 let val = self.eval_expr(expr, env)?;
                 match op {
-                    UnaryOperator::Minus => {
-                        if let Value::Number(n) = val {
-                            Ok(Value::Number(-n))
+                    Minus => {
+                        if let Number(n) = val {
+                            Ok(Number(-n))
                         } else {
-                            Err(RuntimeError { message: "Unary '-' applied to a non-number value".to_string() })
+                            Err(RuntimeError { message: "Unary '-' needs a number".into() })
                         }
-                    },
-                    UnaryOperator::Not => Ok(if val == compiler::value::Value::Number(0) { compiler::value::Value::Number(1) } else { compiler::value::Value::Number(0) }),
+                    }
+                    Not => Ok(Bool(!val.is_truthy())),
                 }
             }
+
             Expr::Call(name, args) => {
                 let func = self.functions.get(name).cloned().ok_or_else(|| RuntimeError {
                     message: format!("Undefined function: {}", name),
                 })?;
-                
+
                 if args.len() != func.params.len() {
                     return Err(RuntimeError {
-                        message: format!(
-                            "Function {} expects {} arguments, got {}",
-                            name,
-                            func.params.len(),
-                            args.len()
-                        ),
+                        message: format!("Function {} expects {} args, got {}", name, func.params.len(), args.len()),
                     });
                 }
-                
+
                 let mut local_env = env.clone();
-                for (param, arg) in func.params.iter().zip(args.iter()) {
-                    let val = self.eval_expr(arg, env)?;
+                for (param, arg_expr) in func.params.iter().zip(args.iter()) {
+                    let val = self.eval_expr(arg_expr, env)?;
                     local_env.insert(param.clone(), val);
                 }
-                
-                match self.run_block(&func.body, &mut local_env)? {
-                    Some(val) => Ok(val),
-                    None => Ok(compiler::value::Value::Number(0)), // Functions without explicit return return 0
-                }
-            }
 
-            Expr::Bool(b) => {Ok(if *b { compiler::value::Value::Bool(true) } else { compiler::value::Value::Bool(false) })}
-            Expr::String(s) => {
-                // For simplicity, we just return the length of the string as its value
-                // In a real interpreter, you might want to handle strings differently
-                Ok(compiler::value::Value::Str(s.to_string()))
+                Ok(self.run_block(&func.body, &mut local_env)?.unwrap_or(Number(0)))
             }
+        }
+    }
+}
+
+// Extension trait to simplify truthiness checks
+trait Truthy {
+    fn is_truthy(&self) -> bool;
+}
+
+impl Truthy for Value {
+    fn is_truthy(&self) -> bool {
+        match self {
+            Value::Bool(true) => true,
+            Value::Number(n) => *n != 0,
+            Value::Str(s) => !s.is_empty(),
+            _ => false,
         }
     }
 }

@@ -4,6 +4,7 @@ pub enum Token {
     Number(i64),
     Ident(String),
     String(String),
+    Bool(bool),
     
     // Keywords
     Let,
@@ -13,6 +14,7 @@ pub enum Token {
     While,
     Return,
     Print,
+
     
     // Operators
     Plus,
@@ -56,6 +58,7 @@ impl std::fmt::Display for Token {
             Token::While => write!(f, "while"),
             Token::Return => write!(f, "return"),
             Token::Print => write!(f, "print"),
+            Token::Bool(b) => write!(f, "Bool({})", b),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
@@ -285,6 +288,8 @@ impl Lexer {
             "while" => Token::While,
             "return" => Token::Return,
             "print" => Token::Print,
+            "true" => Token::Bool(true),
+            "false" => Token::Bool(false),
             _ => Token::Ident(ident),
         }
     }

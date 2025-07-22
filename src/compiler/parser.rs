@@ -46,13 +46,13 @@ impl Parser {
                 token,
             }),
         };
-        
+
         self.expect(Token::LParen)?;
-        
+
         let mut params = Vec::new();
         while *self.peek() != Token::RParen {
             if let Token::Ident(param) = self.next() {
-                params.push(param);
+                params.push(Param { name: param, default_value: None, param_type: ParamType::Any });
                 if *self.peek() == Token::Comma {
                     self.next(); // consume comma
                 } else if *self.peek() != Token::RParen {
@@ -68,7 +68,7 @@ impl Parser {
                 });
             }
         }
-        
+
         self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
 
@@ -121,13 +121,13 @@ impl Parser {
                 let condition = self.parse_expr()?;
                 self.expect(Token::RParen)?;
                 self.expect(Token::LBrace)?;
-                
+
                 let mut then_body = Vec::new();
                 while *self.peek() != Token::RBrace {
                     then_body.push(self.parse_stmt()?);
                 }
                 self.expect(Token::RBrace)?;
-                
+
                 let else_body = if *self.peek() == Token::Else {
                     self.next(); // consume else
                     self.expect(Token::LBrace)?;
@@ -140,7 +140,7 @@ impl Parser {
                 } else {
                     None
                 };
-                
+
                 Ok(Stmt::If(condition, then_body, else_body))
             }
             Token::While => {
@@ -149,13 +149,13 @@ impl Parser {
                 let condition = self.parse_expr()?;
                 self.expect(Token::RParen)?;
                 self.expect(Token::LBrace)?;
-                
+
                 let mut body = Vec::new();
                 while *self.peek() != Token::RBrace {
                     body.push(self.parse_stmt()?);
                 }
                 self.expect(Token::RBrace)?;
-                
+
                 Ok(Stmt::While(condition, body))
             }
             _ => {
@@ -249,7 +249,7 @@ impl Parser {
                 let expr = self.parse_unary()?;
                 Ok(Expr::UnaryOp(UnaryOperator::Not, Box::new(expr)))
             }
-            _ => self.parse_call()
+            _ => self.parse_call(),
         }
     }
 
@@ -260,7 +260,7 @@ impl Parser {
             if *self.peek() == Token::LParen {
                 self.next(); // consume (
                 let mut args = Vec::new();
-                
+
                 while *self.peek() != Token::RParen {
                     args.push(self.parse_expr()?);
                     if *self.peek() == Token::Comma {
@@ -272,7 +272,7 @@ impl Parser {
                         });
                     }
                 }
-                
+
                 self.expect(Token::RParen)?;
                 return Ok(Expr::Call(name.clone(), args));
             }
@@ -286,6 +286,7 @@ impl Parser {
             Token::Number(n) => Ok(Expr::Number(n)),
             Token::Ident(s) => Ok(Expr::Ident(s)),
             Token::String(s) => Ok(Expr::String(s)),
+            Token::Bool(b) => Ok(Expr::Bool(b)),
             Token::LParen => {
                 let expr = self.parse_expr()?;
                 self.expect(Token::RParen)?;
@@ -294,7 +295,7 @@ impl Parser {
             token => Err(ParseError {
                 message: "Unexpected token in expression".to_string(),
                 token,
-            })
+            }),
         }
     }
 

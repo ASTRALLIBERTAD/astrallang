@@ -43,22 +43,5 @@ L0:
     mov rax, 0
     call printf
 L1:
-L2:
-    mov rax, 10
-    push rax
-    mov rax, [rbp-16]
-    mov rbx, rax
-    pop rax
-    cmp rax, rbx
-    sete al
-    movzx rax, al
-    cmp rax, 0
-    je L3
-    mov rsi, rax
-    mov rdi, fmt
-    mov rax, 0
-    call printf
-    jmp L2
-L3:
     mov rdi, 0
     call exit

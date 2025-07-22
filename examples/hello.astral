@@ -9,9 +9,16 @@ fn main() {
     else {
         print(59);
     }
+    cow(78);   
+}
 
-    while ( 10 == y) {
-        print("djj");
+fn cow(name) {
+    let r = name + 6;
+    print(r);
+
+    let x = true;
+
+    if (x) {
+        print("kk");
     }
-      
 }

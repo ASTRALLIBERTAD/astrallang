@@ -1,456 +1,430 @@
 use crate::compiler::ast::*;
 use std::collections::HashMap;
+use std::fmt::Write;
 
-pub fn generate_llvm(func: &Function) -> String {
-    let mut generator = LLVMGenerator::new();
-    generator.generate_function(func)
+pub struct LLVMCodegen {
+    output: String,
+    next_label: u32,
+    next_temp: u32,
+    functions: HashMap<String, FunctionInfo>,
 }
 
-#[derive(Debug, Clone)]
-enum Value {
-    Constant(i64),
-    Register(String),
+#[derive(Clone)]
+struct FunctionInfo {
+    params: Vec<String>,
+    return_type: String,
 }
 
-impl Value {
-    fn to_llvm(&self) -> String {
-        match self {
-            Value::Constant(n) => n.to_string(),
-            Value::Register(r) => r.clone(),
-        }
-    }
-}
-
-struct LLVMGenerator {
-    label_counter: usize,
-    variables: HashMap<String, String>, // variable name -> LLVM register
-    register_counter: usize,
-    code_buffer: Vec<String>,
-    // Optimization state
-    constant_values: HashMap<String, i64>, // track constant values in registers
-    unused_registers: Vec<String>, // pool of unused registers for reuse
-}
-
-impl LLVMGenerator {
-    fn new() -> Self {
-        LLVMGenerator {
-            label_counter: 0,
-            variables: HashMap::new(),
-            register_counter: 0,
-            code_buffer: Vec::new(),
-            constant_values: HashMap::new(),
-            unused_registers: Vec::new(),
+impl LLVMCodegen {
+    pub fn new() -> Self {
+        Self {
+            output: String::new(),
+            next_label: 0,
+            next_temp: 0,
+            functions: HashMap::new(),
         }
     }
 
-    fn next_register(&mut self) -> String {
-        // Try to reuse an unused register first
-        if let Some(reg) = self.unused_registers.pop() {
-            reg
-        } else {
-            let reg = format!("%{}", self.register_counter);
-            self.register_counter += 1;
-            reg
+    pub fn generate(&mut self, stmts: &[Stmt]) -> Result<String, String> {
+        // Generate LLVM header and declarations
+        self.generate_header();
+
+        // First pass: collect function signatures
+        for stmt in stmts {
+            if let Stmt::Function(func) = stmt {
+                self.functions.insert(
+                    func.name.clone(),
+                    FunctionInfo {
+                        params: func.params.iter().map(|p| p.name.clone()).collect(),
+                        return_type: "i64".to_string(), // Assuming all functions return i64 for simplicity
+                    }
+                );
+            }
+        }
+
+        // Second pass: generate function definitions
+        for stmt in stmts {
+            if let Stmt::Function(func) = stmt {
+                self.generate_function(func)?;
+            }
+        }
+
+        Ok(self.output.clone())
+    }
+
+    fn generate_header(&mut self) {
+        writeln!(self.output, "; LLVM IR generated from custom language").unwrap();
+        writeln!(self.output, "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"").unwrap();
+        writeln!(self.output, "target triple = \"x86_64-unknown-linux-gnu\"").unwrap();
+        writeln!(self.output).unwrap();
+
+        // Declare external functions
+        writeln!(self.output, "declare i32 @printf(i8*, ...)").unwrap();
+        writeln!(self.output, "declare i8* @malloc(i64)").unwrap();
+        writeln!(self.output, "declare void @free(i8*)").unwrap();
+        writeln!(self.output).unwrap();
+
+        // Global string constants for printing
+        writeln!(self.output, "@.str.num = private unnamed_addr constant [5 x i8] c\"%ld\\0A\\00\", align 1").unwrap();
+        writeln!(self.output, "@.str.bool_true = private unnamed_addr constant [6 x i8] c\"true\\0A\\00\", align 1").unwrap();
+        writeln!(self.output, "@.str.bool_false = private unnamed_addr constant [7 x i8] c\"false\\0A\\00\", align 1").unwrap();
+        writeln!(self.output, "@.str.null = private unnamed_addr constant [6 x i8] c\"null\\0A\\00\", align 1").unwrap();
+        writeln!(self.output, "@.str.str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1").unwrap();
+        writeln!(self.output).unwrap();
+    }
+
+    fn generate_function(&mut self, func: &Function) -> Result<(), String> {
+        // Reset temp counter for each function
+        self.next_temp = func.params.len() as u32;
+
+        // Function signature with parameter names
+        let mut param_decl = String::new();
+        for (i, _param) in func.params.iter().enumerate() {
+            if i > 0 {
+                param_decl.push_str(", ");
+            }
+            param_decl.push_str(&format!("i64 %{}", i));
+        }
+
+        writeln!(
+            self.output,
+            "define i64 @{}({}) {{",
+            func.name,
+            param_decl
+        ).unwrap();
+
+        // Entry block
+        writeln!(self.output, "entry:").unwrap();
+
+        // Allocate space for parameters
+        let mut local_vars = HashMap::new();
+        for (i, param) in func.params.iter().enumerate() {
+            let alloca = self.next_temp();
+            writeln!(self.output, "  %{} = alloca i64, align 8", alloca).unwrap();
+            writeln!(self.output, "  store i64 %{}, i64* %{}, align 8", i, alloca).unwrap();
+            local_vars.insert(param.name.clone(), alloca);
+        }
+
+        // Generate function body
+        let result = self.generate_block(&func.body, &mut local_vars)?;
+
+        // If no explicit return, return 0
+        if !self.has_return(&func.body) {
+            writeln!(self.output, "  ret i64 0").unwrap();
+        }
+
+        writeln!(self.output, "}}").unwrap();
+        writeln!(self.output).unwrap();
+
+        Ok(())
+    }
+
+    fn generate_block(&mut self, stmts: &[Stmt], local_vars: &mut HashMap<String, u32>) -> Result<Option<u32>, String> {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let(name, expr) => {
+                    let val_reg = self.generate_expr(expr, local_vars)?;
+                    let alloca = self.next_temp();
+                    writeln!(self.output, "  %{} = alloca i64, align 8", alloca).unwrap();
+                    writeln!(self.output, "  store i64 %{}, i64* %{}, align 8", val_reg, alloca).unwrap();
+                    local_vars.insert(name.clone(), alloca);
+                }
+
+                Stmt::Print(expr) => {
+                    let val_reg = self.generate_expr(expr, local_vars)?;
+                    // For simplicity, assuming all values are numbers
+                    let temp = self.next_temp();
+                    writeln!(
+                        self.output,
+                        "  %{} = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.str.num, i64 0, i64 0), i64 %{})",
+                        temp,
+                        val_reg
+                    ).unwrap();
+                }
+
+                Stmt::Return(Some(expr)) => {
+                    let val_reg = self.generate_expr(expr, local_vars)?;
+                    writeln!(self.output, "  ret i64 %{}", val_reg).unwrap();
+                    return Ok(Some(val_reg));
+                }
+
+                Stmt::Return(None) => {
+                    writeln!(self.output, "  ret i64 0").unwrap();
+                    return Ok(Some(0)); // Dummy register
+                }
+
+                Stmt::If(condition, then_body, else_body) => {
+                    let cond_reg = self.generate_expr(condition, local_vars)?;
+                    let then_label = self.next_label();
+                    let else_label = self.next_label();
+                    let end_label = self.next_label();
+
+                    // Convert condition to boolean
+                    let bool_reg = self.next_temp();
+                    writeln!(self.output, "  %{} = icmp ne i64 %{}, 0", bool_reg, cond_reg).unwrap();
+                    writeln!(self.output, "  br i1 %{}, label %{}, label %{}", bool_reg, then_label, else_label).unwrap();
+
+                    // Then block
+                    writeln!(self.output, "{}:", then_label).unwrap();
+                    self.generate_block(then_body, local_vars)?;
+                    writeln!(self.output, "  br label %{}", end_label).unwrap();
+
+                    // Else block
+                    writeln!(self.output, "{}:", else_label).unwrap();
+                    if let Some(else_stmts) = else_body {
+                        self.generate_block(else_stmts, local_vars)?;
+                    }
+                    writeln!(self.output, "  br label %{}", end_label).unwrap();
+
+                    // End block
+                    writeln!(self.output, "{}:", end_label).unwrap();
+                }
+
+                Stmt::While(condition, body) => {
+                    let loop_label = self.next_label();
+                    let body_label = self.next_label();
+                    let end_label = self.next_label();
+
+                    writeln!(self.output, "  br label %{}", loop_label).unwrap();
+
+                    // Loop condition check
+                    writeln!(self.output, "{}:", loop_label).unwrap();
+                    let cond_reg = self.generate_expr(condition, local_vars)?;
+                    let bool_reg = self.next_temp();
+                    writeln!(self.output, "  %{} = icmp ne i64 %{}, 0", bool_reg, cond_reg).unwrap();
+                    writeln!(self.output, "  br i1 %{}, label %{}, label %{}", bool_reg, body_label, end_label).unwrap();
+
+                    // Loop body
+                    writeln!(self.output, "{}:", body_label).unwrap();
+                    self.generate_block(body, local_vars)?;
+                    writeln!(self.output, "  br label %{}", loop_label).unwrap();
+
+                    // End of loop
+                    writeln!(self.output, "{}:", end_label).unwrap();
+                }
+
+                Stmt::Expression(expr) => {
+                    self.generate_expr(expr, local_vars)?;
+                }
+
+                Stmt::Function(_) => {
+                    // Function definitions are handled separately
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn generate_expr(&mut self, expr: &Expr, local_vars: &HashMap<String, u32>) -> Result<u32, String> {
+        match expr {
+            Expr::Number(n) => {
+                let reg = self.next_temp();
+                writeln!(self.output, "  %{} = add i64 0, {}", reg, n).unwrap();
+                Ok(reg)
+            }
+
+            Expr::Bool(b) => {
+                let reg = self.next_temp();
+                let val = if *b { 1 } else { 0 };
+                writeln!(self.output, "  %{} = add i64 0, {}", reg, val).unwrap();
+                Ok(reg)
+            }
+
+            Expr::Ident(name) => {
+                let alloca = local_vars.get(name)
+                    .ok_or_else(|| format!("Undefined variable: {}", name))?;
+                let reg = self.next_temp();
+                writeln!(self.output, "  %{} = load i64, i64* %{}, align 8", reg, alloca).unwrap();
+                Ok(reg)
+            }
+
+            Expr::String(_s) => {
+                // For simplicity, strings are treated as their length
+                // In a real implementation, you'd want proper string handling
+                let reg = self.next_temp();
+                writeln!(self.output, "  %{} = add i64 0, {}", reg, _s.len()).unwrap();
+                Ok(reg)
+            }
+
+            Expr::BinaryOp(lhs, op, rhs) => {
+                let left_reg = self.generate_expr(lhs, local_vars)?;
+                let right_reg = self.generate_expr(rhs, local_vars)?;
+
+                match op {
+                    BinaryOperator::Add => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = add i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    BinaryOperator::Subtract => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = sub i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    BinaryOperator::Multiply => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = mul i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    BinaryOperator::Divide => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = sdiv i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    BinaryOperator::Modulo => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = srem i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    BinaryOperator::Equal => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp eq i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                    BinaryOperator::NotEqual => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp ne i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                    BinaryOperator::Less => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp slt i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                    BinaryOperator::Greater => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp sgt i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                    BinaryOperator::LessEqual => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp sle i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                    BinaryOperator::GreaterEqual => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp sge i64 %{}, %{}", result_reg, left_reg, right_reg).unwrap();
+                        let zext_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", zext_reg, result_reg).unwrap();
+                        Ok(zext_reg)
+                    }
+                }
+            }
+
+            Expr::UnaryOp(op, expr) => {
+                let val_reg = self.generate_expr(expr, local_vars)?;
+
+                match op {
+                    UnaryOperator::Minus => {
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = sub i64 0, %{}", result_reg, val_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                    UnaryOperator::Not => {
+                        let cmp_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = icmp eq i64 %{}, 0", cmp_reg, val_reg).unwrap();
+                        let result_reg = self.next_temp();
+                        writeln!(self.output, "  %{} = zext i1 %{} to i64", result_reg, cmp_reg).unwrap();
+                        Ok(result_reg)
+                    }
+                }
+            }
+
+            Expr::Call(name, args) => {
+                let func_info = self.functions.get(name)
+                    .ok_or_else(|| format!("Undefined function: {}", name))?;
+
+                if args.len() != func_info.params.len() {
+                    return Err(format!(
+                        "Function {} expects {} arguments, got {}",
+                        name,
+                        func_info.params.len(),
+                        args.len()
+                    ));
+                }
+
+                let mut arg_regs = Vec::new();
+                for arg in args {
+                    let arg_reg = self.generate_expr(arg, local_vars)?;
+                    arg_regs.push(arg_reg);
+                }
+
+                let result_reg = self.next_temp();
+                let arg_list = arg_regs.iter()
+                    .map(|reg| format!("i64 %{}", reg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                writeln!(
+                    self.output,
+                    "  %{} = call i64 @{}({})",
+                    result_reg,
+                    name,
+                    arg_list
+                ).unwrap();
+
+                Ok(result_reg)
+            }
         }
     }
 
-    fn mark_register_unused(&mut self, reg: &str) {
-        if reg.starts_with('%') && !self.unused_registers.contains(&reg.to_string()) {
-            self.unused_registers.push(reg.to_string());
-        }
+    fn next_temp(&mut self) -> u32 {
+        let temp = self.next_temp;
+        self.next_temp += 1;
+        temp
     }
 
     fn next_label(&mut self) -> String {
-        let label = format!("label{}", self.label_counter);
-        self.label_counter += 1;
+        let label = format!("label{}", self.next_label);
+        self.next_label += 1;
         label
     }
 
-    fn emit(&mut self, instruction: String) {
-        self.code_buffer.push(instruction);
+    fn has_return(&self, stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|stmt| matches!(stmt, Stmt::Return(_)))
     }
+}
 
-    fn flush_code(&mut self) -> String {
-        let result = self.code_buffer.join("");
-        self.code_buffer.clear();
-        result
-    }
-
-    // Constant folding for binary operations
-    fn fold_binary_op(&self, lhs: i64, op: &BinaryOperator, rhs: i64) -> Option<i64> {
-        match op {
-            BinaryOperator::Add => Some(lhs.wrapping_add(rhs)),
-            BinaryOperator::Subtract => Some(lhs.wrapping_sub(rhs)),
-            BinaryOperator::Multiply => Some(lhs.wrapping_mul(rhs)),
-            BinaryOperator::Divide => {
-                if rhs != 0 { Some(lhs / rhs) } else { None }
-            },
-            BinaryOperator::Modulo => {
-                if rhs != 0 { Some(lhs % rhs) } else { None }
-            },
-            BinaryOperator::Equal => Some(if lhs == rhs { 1 } else { 0 }),
-            BinaryOperator::NotEqual => Some(if lhs != rhs { 1 } else { 0 }),
-            BinaryOperator::Less => Some(if lhs < rhs { 1 } else { 0 }),
-            BinaryOperator::Greater => Some(if lhs > rhs { 1 } else { 0 }),
-            BinaryOperator::LessEqual => Some(if lhs <= rhs { 1 } else { 0 }),
-            BinaryOperator::GreaterEqual => Some(if lhs >= rhs { 1 } else { 0 }),
+// Main interface function that matches your usage pattern
+pub fn generate_llvm(main_func: &Function) -> String {
+    let mut codegen = LLVMCodegen::new();
+    
+    // Generate LLVM header
+    codegen.generate_header();
+    
+    // Add main function info to functions map
+    codegen.functions.insert(
+        main_func.name.clone(),
+        FunctionInfo {
+            params: main_func.params.iter().map(|p| p.name.clone()).collect(),
+            return_type: "i64".to_string(),
         }
+    );
+    
+    // Reset temp counter before generating function
+    codegen.next_temp = 0;
+    
+    // Generate the main function
+    if let Err(e) = codegen.generate_function(main_func) {
+        eprintln!("Error generating LLVM IR: {}", e);
+        return String::new();
     }
+    
+    codegen.output
+}
 
-    // Constant folding for unary operations
-    fn fold_unary_op(&self, op: &UnaryOperator, operand: i64) -> i64 {
-        match op {
-            UnaryOperator::Minus => -operand,
-            UnaryOperator::Not => if operand == 0 { 1 } else { 0 },
-        }
-    }
-
-    fn generate_function(&mut self, func: &Function) -> String {
-        let mut ir = String::new();
-        
-        // LLVM IR header
-        ir.push_str("; Optimized LLVM IR for Astral language\n");
-        ir.push_str("target triple = \"aarch64-linux-android\"\n\n");
-        
-        // Declare external functions
-        ir.push_str("declare i32 @printf(i8*, ...)\n");
-        ir.push_str("declare void @exit(i32)\n\n");
-        
-        // Format string for printing
-        ir.push_str("@fmt = private constant [5 x i8] c\"%ld\\0A\\00\"\n\n");
-        
-        // Main function
-        ir.push_str("define i32 @main() {\n");
-        ir.push_str("entry:\n");
-        
-        // Generate function body
-        for stmt in &func.body {
-            ir.push_str(&self.generate_stmt(stmt));
-        }
-        
-        // Return 0 and close function
-        ir.push_str("    ret i32 0\n");
-        ir.push_str("}\n");
-        
-        ir
-    }
-
-    fn generate_stmt(&mut self, stmt: &Stmt) -> String {
-        match stmt {
-            Stmt::Let(name, expr) => {
-                let value = self.generate_expr_optimized(expr);
-                
-                match value {
-                    Value::Constant(n) => {
-                        // For constants, we can often avoid allocation and just track the value
-                        let alloca_reg = self.next_register();
-                        self.emit(format!("    {} = alloca i64\n", alloca_reg));
-                        self.emit(format!("    store i64 {}, i64* {}\n", n, alloca_reg));
-                        self.variables.insert(name.clone(), alloca_reg.clone());
-                        // Track that this variable has a constant value
-                        if let Some(var_reg) = self.variables.get(name) {
-                            self.constant_values.insert(var_reg.clone(), n);
-                        }
-                    }
-                    Value::Register(reg) => {
-                        let alloca_reg = self.next_register();
-                        self.emit(format!("    {} = alloca i64\n", alloca_reg));
-                        self.emit(format!("    store i64 {}, i64* {}\n", reg, alloca_reg));
-                        self.variables.insert(name.clone(), alloca_reg);
-                        self.mark_register_unused(&reg);
-                    }
-                }
-                
-                self.flush_code()
-            }
-            
-            Stmt::Print(expr) => {
-                let value = self.generate_expr_optimized(expr);
-                
-                let fmt_reg = self.next_register();
-                self.emit(format!("    {} = getelementptr [5 x i8], [5 x i8]* @fmt, i32 0, i32 0\n", fmt_reg));
-                self.emit(format!("    call i32 (i8*, ...) @printf(i8* {}, i64 {})\n", fmt_reg, value.to_llvm()));
-                
-                if let Value::Register(reg) = value {
-                    self.mark_register_unused(&reg);
-                }
-                
-                self.flush_code()
-            }
-            
-            Stmt::If(condition, then_body, else_body) => {
-                let cond_value = self.generate_expr_optimized(condition);
-                
-                // Constant condition optimization
-                if let Value::Constant(n) = cond_value {
-                    if n != 0 {
-                        // Condition is always true - only generate then branch
-                        let mut code = String::new();
-                        for stmt in then_body {
-                            code.push_str(&self.generate_stmt(stmt));
-                        }
-                        return code;
-                    } else {
-                        // Condition is always false - only generate else branch
-                        if let Some(else_stmts) = else_body {
-                            let mut code = String::new();
-                            for stmt in else_stmts {
-                                code.push_str(&self.generate_stmt(stmt));
-                            }
-                            return code;
-                        } else {
-                            return String::new(); // No code needed
-                        }
-                    }
-                }
-                
-                let then_label = self.next_label();
-                let else_label = self.next_label();
-                let end_label = self.next_label();
-                
-                let cmp_reg = self.next_register();
-                self.emit(format!(
-                    "    {} = icmp ne i64 {}, 0\n",
-                    cmp_reg,
-                    cond_value.to_llvm()
-                ));
-                self.emit(format!(
-                    "    br i1 {}, label %{}, label %{}\n",
-                    cmp_reg, then_label, else_label
-                ));
-
-                
-                self.emit(format!("{}:\n", then_label));
-                for stmt in then_body {
-                    let stmt_code = self.generate_stmt(stmt);
-                    self.emit(stmt_code);
-                }
-                self.emit(format!("    br label %{}\n", end_label));
-                
-                self.emit(format!("{}:\n", else_label));
-                if let Some(else_stmts) = else_body {
-                    for stmt in else_stmts {
-                        let stmt_code = self.generate_stmt(stmt);
-                        self.emit(stmt_code);
-                    }
-                }
-                self.emit(format!("    br label %{}\n", end_label));
-                
-                self.emit(format!("{}:\n", end_label));
-                
-                if let Value::Register(reg) = cond_value {
-                    self.mark_register_unused(&reg);
-                }
-                
-                self.flush_code()
-            }
-            
-            Stmt::While(condition, body) => {
-                // Check if it's an infinite loop or never-executed loop
-                if let Value::Constant(n) = self.generate_expr_optimized(condition) {
-                    if n == 0 {
-                        // Loop never executes
-                        return String::new();
-                    }
-                    // Note: infinite loops (n != 0) still need proper code generation
-                    // for break statements and other control flow
-                }
-                
-                let loop_label = self.next_label();
-                let body_label = self.next_label();
-                let end_label = self.next_label();
-                
-                self.emit(format!("    br label %{}\n", loop_label));
-                self.emit(format!("{}:\n", loop_label));
-                
-                let cond_value = self.generate_expr_optimized(condition);
-                
-                let cmp_reg = self.next_register();
-                self.emit(format!("    {} = icmp ne i64 {}, 0\n", cmp_reg, cond_value.to_llvm()));
-                self.emit(format!("    br i1 {}, label %{}, label %{}\n", cmp_reg, body_label, end_label));
-                
-                self.emit(format!("{}:\n", body_label));
-                for stmt in body {
-                    let stmt_code = self.generate_stmt(stmt);
-                    self.emit(stmt_code);
-                }
-                self.emit(format!("    br label %{}\n", loop_label));
-                
-                self.emit(format!("{}:\n", end_label));
-                
-                if let Value::Register(reg) = cond_value {
-                    self.mark_register_unused(&reg);
-                }
-                
-                self.flush_code()
-            }
-            
-            Stmt::Expression(expr) => {
-                let value = self.generate_expr_optimized(expr);
-                if let Value::Register(reg) = value {
-                    self.mark_register_unused(&reg);
-                }
-                self.flush_code()
-            }
-            
-            _ => String::new(),
-        }
-    }
-
-    fn generate_expr_optimized(&mut self, expr: &Expr) -> Value {
-        match expr {
-            Expr::Number(n) => Value::Constant(*n),
-            
-            Expr::Ident(name) => {
-                if let Some(var_reg) = self.variables.get(name).cloned() {
-                    // Check if we know this variable's constant value
-                    if let Some(&const_val) = self.constant_values.get(&var_reg) {
-                        Value::Constant(const_val)
-                    } else {
-                        let load_reg = self.next_register();
-                        self.emit(format!("    {} = load i64, i64* {}\n", load_reg, var_reg));
-                        Value::Register(load_reg)
-                    }
-                } else {
-                    let reg = self.next_register();
-                    self.emit(format!("    {} = add i64 0, 0  ; undefined variable {}\n", reg, name));
-                    Value::Register(reg)
-                }
-            }
-            
-            Expr::BinaryOp(lhs, op, rhs) => {
-                let lhs_val = self.generate_expr_optimized(lhs);
-                let rhs_val = self.generate_expr_optimized(rhs);
-                
-                // Constant folding
-                if let (Value::Constant(l), Value::Constant(r)) = (&lhs_val, &rhs_val) {
-                    if let Some(result) = self.fold_binary_op(*l, op, *r) {
-                        return Value::Constant(result);
-                    }
-                }
-                
-                // Strength reduction optimizations
-                match (op, &lhs_val, &rhs_val) {
-                    // x + 0 = x, 0 + x = x
-                    (BinaryOperator::Add, Value::Constant(0), val) | 
-                    (BinaryOperator::Add, val, Value::Constant(0)) => val.clone(),
-                    
-                    // x - 0 = x
-                    (BinaryOperator::Subtract, val, Value::Constant(0)) => val.clone(),
-                    
-                    // x * 0 = 0, 0 * x = 0
-                    (BinaryOperator::Multiply, Value::Constant(0), _) | 
-                    (BinaryOperator::Multiply, _, Value::Constant(0)) => Value::Constant(0),
-                    
-                    // x * 1 = x, 1 * x = x
-                    (BinaryOperator::Multiply, Value::Constant(1), val) | 
-                    (BinaryOperator::Multiply, val, Value::Constant(1)) => val.clone(),
-                    
-                    // x * 2 -> x << 1 (left shift), but LLVM will optimize this anyway
-                    // x / 1 = x
-                    (BinaryOperator::Divide, val, Value::Constant(1)) => val.clone(),
-                    
-                    _ => {
-                        // Generate normal binary operation
-                        let result_reg = self.next_register();
-                        
-                        let llvm_op = match op {
-                            BinaryOperator::Add => "add",
-                            BinaryOperator::Subtract => "sub", 
-                            BinaryOperator::Multiply => "mul",
-                            BinaryOperator::Divide => "sdiv",
-                            BinaryOperator::Modulo => "srem",
-                            _ => {
-                                // Comparison operations
-                                let cmp_op = match op {
-                                    BinaryOperator::Equal => "eq",
-                                    BinaryOperator::NotEqual => "ne", 
-                                    BinaryOperator::Less => "slt",
-                                    BinaryOperator::Greater => "sgt",
-                                    BinaryOperator::LessEqual => "sle",
-                                    BinaryOperator::GreaterEqual => "sge",
-                                    _ => unreachable!(),
-                                };
-                                
-                                let cmp_reg = self.next_register();
-                                self.emit(format!("    {} = icmp {} i64 {}, {}\n", cmp_reg, cmp_op, lhs_val.to_llvm(), rhs_val.to_llvm()));
-                                self.emit(format!("    {} = zext i1 {} to i64\n", result_reg, cmp_reg));
-                                
-                                // Mark input registers as unused
-                                if let Value::Register(reg) = lhs_val { self.mark_register_unused(&reg); }
-                                if let Value::Register(reg) = rhs_val { self.mark_register_unused(&reg); }
-                                
-                                return Value::Register(result_reg);
-                            }
-                        };
-                        
-                        self.emit(format!("    {} = {} i64 {}, {}\n", result_reg, llvm_op, lhs_val.to_llvm(), rhs_val.to_llvm()));
-                        
-                        // Mark input registers as unused
-                        if let Value::Register(reg) = lhs_val { self.mark_register_unused(&reg); }
-                        if let Value::Register(reg) = rhs_val { self.mark_register_unused(&reg); }
-                        
-                        Value::Register(result_reg)
-                    }
-                }
-            }
-            
-            Expr::UnaryOp(op, operand) => {
-                let operand_val = self.generate_expr_optimized(operand);
-                
-                // Constant folding
-                if let Value::Constant(n) = operand_val {
-                    return Value::Constant(self.fold_unary_op(op, n));
-                }
-                
-                // Optimizations for specific cases
-                match op {
-                    UnaryOperator::Minus => {
-                        let result_reg = self.next_register();
-                        self.emit(format!("    {} = sub i64 0, {}\n", result_reg, operand_val.to_llvm()));
-                        if let Value::Register(reg) = operand_val { self.mark_register_unused(&reg); }
-                        Value::Register(result_reg)
-                    }
-                    UnaryOperator::Not => {
-                        let cmp_reg = self.next_register();
-                        let result_reg = self.next_register();
-                        self.emit(format!("    {} = icmp eq i64 {}, 0\n", cmp_reg, operand_val.to_llvm()));
-                        self.emit(format!("    {} = zext i1 {} to i64\n", result_reg, cmp_reg));
-                        if let Value::Register(reg) = operand_val { self.mark_register_unused(&reg); }
-                        Value::Register(result_reg)
-                    }
-                }
-            }
-            
-            _ => {
-                let reg = self.next_register();
-                self.emit(format!("    {} = add i64 0, 0  ; unimplemented expression\n", reg));
-                Value::Register(reg)
-            }
-        }
-    }
-
-    fn branch(&mut self, cond_reg: &str, then_label: &str, else_label: &str) -> String {
-        let cmp_reg = self.next_register();
-        let mut code = String::new();
-        code.push_str(&format!("    {} = icmp ne i64 {}, 0\n", cmp_reg, cond_reg));
-        code.push_str(&format!("    br i1 {}, label %{}, label %{}\n", cmp_reg, then_label, else_label));
-        code
-    }
-
-    fn store_string_literal(&mut self, s: &str) -> String {
-        let name = format!("@.str{}", self.label_counter);
-        self.label_counter += 1;
-        let len = s.len() + 1;
-        let escaped = s.escape_default().to_string();
-        self.code_buffer.insert(
-            0,
-            format!(
-                "{} = private constant [{} x i8] c\"{}\\00\"\n",
-                name, len, escaped
-            ),
-        );
-        name
-    }
-
+// Alternative function for full AST compilation
+pub fn compile_to_llvm(ast: &[Stmt]) -> Result<String, String> {
+    let mut codegen = LLVMCodegen::new();
+    codegen.generate(ast)
 }
