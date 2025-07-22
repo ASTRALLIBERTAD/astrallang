@@ -1,24 +1,25 @@
 fn main() {
     let x = 5;
     let y = 10;
-
+    let y = 59;
     let q = 0;
     if (5 > 10){
         print(x * y);
     }
     else {
-        print(59);
+        
+        print(y);
     }
-    cow(78);   
+    cow("jake", 8);   
 }
 
-fn cow(name) {
-    let r = name + 6;
+fn cow(name: String, num: Number) {
+    let r = num + 6;
     print(r);
 
     let x = true;
 
     if (x) {
-        print("kk");
+        print(num);
     }
 }

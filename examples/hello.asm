@@ -13,8 +13,10 @@ _start:
     mov [rbp-8], rax
     mov rax, 10
     mov [rbp-16], rax
-    mov rax, 0
+    mov rax, 59
     mov [rbp-24], rax
+    mov rax, 0
+    mov [rbp-32], rax
     mov rax, 5
     push rax
     mov rax, 10
@@ -27,7 +29,7 @@ _start:
     je L0
     mov rax, [rbp-8]
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-24]
     mov rbx, rax
     pop rax
     imul rax, rbx
@@ -37,7 +39,7 @@ _start:
     call printf
     jmp L1
 L0:
-    mov rax, 59
+    mov rax, [rbp-24]
     mov rsi, rax
     mov rdi, fmt
     mov rax, 0

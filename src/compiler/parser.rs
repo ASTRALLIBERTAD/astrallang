@@ -1,4 +1,4 @@
-use crate::compiler::ast::*;
+use crate::compiler::{self, ast::*};
 use crate::compiler::lexer::Token;
 use std::fmt;
 
@@ -38,48 +38,92 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Result<Function, ParseError> {
-        self.expect(Token::Fn)?;
-        let name = match self.next() {
-            Token::Ident(s) => s,
-            token => return Err(ParseError {
+    self.expect(Token::Fn)?;
+    
+    let name = match self.next() {
+        Token::Ident(s) => s,
+        token => {
+            return Err(ParseError {
                 message: "Expected function name".to_string(),
                 token,
-            }),
-        };
+            });
+        }
+    };
 
-        self.expect(Token::LParen)?;
+    self.expect(Token::LParen)?;
 
-        let mut params = Vec::new();
-        while *self.peek() != Token::RParen {
-            if let Token::Ident(param) = self.next() {
-                params.push(Param { name: param, default_value: None, param_type: ParamType::Any });
-                if *self.peek() == Token::Comma {
-                    self.next(); // consume comma
-                } else if *self.peek() != Token::RParen {
-                    return Err(ParseError {
-                        message: "Expected ',' or ')' in parameter list".to_string(),
-                        token: self.peek().clone(),
-                    });
-                }
-            } else {
+    let mut params = Vec::new();
+    while *self.peek() != Token::RParen {
+        // Parameter name
+        let param_name = match self.next() {
+            Token::Ident(s) => s,
+            token => {
                 return Err(ParseError {
                     message: "Expected parameter name".to_string(),
-                    token: self.peek().clone(),
+                    token,
                 });
             }
+        };
+
+        // Expect colon
+        self.expect(Token::Colon)?;
+
+        // Parameter type
+        let param_type = match self.next() {
+            Token::Ident(t) => match t.as_str() {
+                "String" => ParamType::String,
+                "Bool" => ParamType::Bool,
+                "Number" => ParamType::Number,
+                "Any" => ParamType::Any,
+                _ => {
+                    return Err(ParseError {
+                        message: format!("Unknown parameter type '{}'", t),
+                        token: Token::Ident(t),
+                    });
+                }
+            },
+            token => {
+                return Err(ParseError {
+                    message: "Expected parameter type".to_string(),
+                    token,
+                });
+            }
+        };
+
+        params.push(Param {
+            name: param_name,
+            param_type,
+            default_value: None,
+        });
+
+        // Comma or closing paren
+        if *self.peek() == Token::Comma {
+            self.next(); // consume comma
+        } else if *self.peek() != Token::RParen {
+            return Err(ParseError {
+                message: "Expected ',' or ')' in parameter list".to_string(),
+                token: self.peek().clone(),
+            });
         }
-
-        self.expect(Token::RParen)?;
-        self.expect(Token::LBrace)?;
-
-        let mut body = Vec::new();
-        while *self.peek() != Token::RBrace {
-            body.push(self.parse_stmt()?);
-        }
-        self.expect(Token::RBrace)?;
-
-        Ok(Function { name, params, body })
     }
+
+    self.expect(Token::RParen)?;
+    self.expect(Token::LBrace)?;
+
+    let mut body = Vec::new();
+    while *self.peek() != Token::RBrace {
+        body.push(self.parse_stmt()?);
+    }
+
+    self.expect(Token::RBrace)?;
+
+    Ok(Function {
+        name,
+        params,
+        body,
+    })
+}
+
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {

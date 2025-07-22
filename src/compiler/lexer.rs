@@ -38,6 +38,7 @@ pub enum Token {
     RBrace,
     Semicolon,
     Comma,
+    Colon,
     
     // Special
     EOF,
@@ -78,6 +79,7 @@ impl std::fmt::Display for Token {
             Token::RBrace => write!(f, "}}"),
             Token::Semicolon => write!(f, ";"),
             Token::Comma => write!(f, ","),
+            Token::Colon => write!(f, ":"),
             Token::EOF => write!(f, "EOF"),
             Token::Quatation => write!(f, "\""),
         }
@@ -188,6 +190,7 @@ impl Lexer {
             '}' => Ok(Some(Token::RBrace)),
             ';' => Ok(Some(Token::Semicolon)),
             ',' => Ok(Some(Token::Comma)),
+            ':' => Ok(Some(Token::Colon)),
             
             '"' => {
                 let mut string = String::new();

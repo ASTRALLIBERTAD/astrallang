@@ -18,7 +18,7 @@ impl fmt::Display for RuntimeError {
 // Stores function parameters and body for later execution
 #[derive(Clone, Debug)]
 pub struct FunctionDef {
-    pub params: Vec<String>,
+    pub params: Vec<Param>,
     pub body: Vec<Stmt>,
 }
 
@@ -41,9 +41,10 @@ impl Interpreter {
         for stmt in stmts {
             if let Stmt::Function(func) = stmt {
                 self.functions.insert(func.name.clone(), FunctionDef {
-                    params: func.params.iter().map(|p| p.name.clone()).collect(),
-                    body: func.body.clone(),
-                });
+                params: func.params.clone(), // includes name and type
+                body: func.body.clone(),
+            });
+
             }
         }
 
@@ -207,9 +208,22 @@ impl Interpreter {
 
                 let mut local_env = env.clone();
                 for (param, arg_expr) in func.params.iter().zip(args.iter()) {
-                    let val = self.eval_expr(arg_expr, env)?;
-                    local_env.insert(param.clone(), val);
+                let val = self.eval_expr(arg_expr, env)?;
+
+                // Type check here:
+                match (&param.param_type, &val) {
+                    (ParamType::String, Value::Str(_)) => {}
+                    (ParamType::Number, Value::Number(_)) => {}
+                    (ParamType::Bool,   Value::Bool(_)) => {}
+                    (ParamType::Any,    _)              => {}
+                    _ => return Err(RuntimeError {
+                        message: format!("Type mismatch for parameter '{}'", param.name),
+                    }),
                 }
+
+                local_env.insert(param.name.clone(), val);
+            }
+
 
                 Ok(self.run_block(&func.body, &mut local_env)?.unwrap_or(Number(0)))
             }
