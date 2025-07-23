@@ -1,4 +1,4 @@
-use crate::compiler::{self, ast::*};
+use crate::compiler::ast::*;
 use crate::compiler::lexer::Token;
 use std::fmt;
 
@@ -14,6 +14,8 @@ impl fmt::Display for ParseError {
     }
 }
 
+impl std::error::Error for ParseError {}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -26,8 +28,8 @@ impl Parser {
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut statements = Vec::new();
-        while *self.peek() != Token::EOF {
-            if *self.peek() == Token::Fn {
+        while !self.is_at_end() {
+            if matches!(self.peek(), Token::Fn) {
                 let func = self.parse_function()?;
                 statements.push(Stmt::Function(func));
             } else {
@@ -38,95 +40,123 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Result<Function, ParseError> {
-    self.expect(Token::Fn)?;
-    
-    let name = match self.next() {
-        Token::Ident(s) => s,
-        token => {
-            return Err(ParseError {
-                message: "Expected function name".to_string(),
-                token,
-            });
-        }
-    };
-
-    self.expect(Token::LParen)?;
-
-    let mut params = Vec::new();
-    while *self.peek() != Token::RParen {
-        // Parameter name
-        let param_name = match self.next() {
+        self.expect(Token::Fn)?;
+        
+        let name = match self.next() {
             Token::Ident(s) => s,
             token => {
                 return Err(ParseError {
-                    message: "Expected parameter name".to_string(),
+                    message: "Expected function name".to_string(),
                     token,
                 });
             }
         };
 
-        // Expect colon
-        self.expect(Token::Colon)?;
+        self.expect(Token::LParen)?;
 
-        // Parameter type
-        let param_type = match self.next() {
-            Token::Ident(t) => match t.as_str() {
-                "String" => ParamType::String,
-                "Bool" => ParamType::Bool,
-                "Number" => ParamType::Number,
-                "Any" => ParamType::Any,
-                _ => {
+        let mut params = Vec::new();
+        while !matches!(self.peek(), Token::RParen) {
+            // Parameter name
+            let param_name = match self.next() {
+                Token::Ident(s) => s,
+                token => {
                     return Err(ParseError {
-                        message: format!("Unknown parameter type '{}'", t),
-                        token: Token::Ident(t),
+                        message: "Expected parameter name".to_string(),
+                        token,
                     });
                 }
-            },
-            token => {
+            };
+            
+            // Expect colon
+            self.expect(Token::Colon)?;
+
+            // Parameter type
+            let param_type = self.parse_param_type()?;
+
+            params.push(Param {
+                name: param_name,
+                param_type,
+                default_value: None,
+            });
+
+            // Comma or closing paren
+            if matches!(self.peek(), Token::Comma) {
+                self.next(); // consume comma
+            } else if !matches!(self.peek(), Token::RParen) {
                 return Err(ParseError {
-                    message: "Expected parameter type".to_string(),
-                    token,
+                    message: "Expected ',' or ')' in parameter list".to_string(),
+                    token: self.peek().clone(),
                 });
             }
-        };
+        }
 
-        params.push(Param {
-            name: param_name,
-            param_type,
-            default_value: None,
-        });
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
 
-        // Comma or closing paren
-        if *self.peek() == Token::Comma {
-            self.next(); // consume comma
-        } else if *self.peek() != Token::RParen {
-            return Err(ParseError {
-                message: "Expected ',' or ')' in parameter list".to_string(),
-                token: self.peek().clone(),
-            });
+        let mut body = Vec::new();
+        while !matches!(self.peek(), Token::RBrace) {
+            body.push(self.parse_stmt()?);
+        }
+
+        self.expect(Token::RBrace)?;
+
+        Ok(Function {
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn parse_param_type(&mut self) -> Result<ParamType, ParseError> {
+        match self.next() {
+            Token::StringType => Ok(ParamType::String),
+            Token::BoolType => Ok(ParamType::Bool),
+            Token::I8 => Ok(ParamType::Number(Type::I8)),
+            Token::I16 => Ok(ParamType::Number(Type::I16)),
+            Token::I32 => Ok(ParamType::Number(Type::I32)),
+            Token::I64 => Ok(ParamType::Number(Type::I64)),
+            Token::I128 => Ok(ParamType::Number(Type::I128)),
+            Token::U8 => Ok(ParamType::Number(Type::U8)),
+            Token::U16 => Ok(ParamType::Number(Type::U16)),
+            Token::U32 => Ok(ParamType::Number(Type::U32)),
+            Token::U64 => Ok(ParamType::Number(Type::U64)),
+            Token::U128 => Ok(ParamType::Number(Type::U128)),
+            Token::F32 => Ok(ParamType::Number(Type::F32)),
+            Token::F64 => Ok(ParamType::Number(Type::F64)),
+            Token::Any => Ok(ParamType::Any),
+            token => Err(ParseError {
+                message: "Expected parameter type".to_string(),
+                token,
+            })
         }
     }
 
-    self.expect(Token::RParen)?;
-    self.expect(Token::LBrace)?;
-
-    let mut body = Vec::new();
-    while *self.peek() != Token::RBrace {
-        body.push(self.parse_stmt()?);
+    fn parse_type(&mut self) -> Result<Type, ParseError> {
+        match self.next() {
+            Token::I8 => Ok(Type::I8),
+            Token::I16 => Ok(Type::I16),
+            Token::I32 => Ok(Type::I32),
+            Token::I64 => Ok(Type::I64),
+            Token::I128 => Ok(Type::I128),
+            Token::U8 => Ok(Type::U8),
+            Token::U16 => Ok(Type::U16),
+            Token::U32 => Ok(Type::U32),
+            Token::U64 => Ok(Type::U64),
+            Token::U128 => Ok(Type::U128),
+            Token::F32 => Ok(Type::F32),
+            Token::F64 => Ok(Type::F64),
+            Token::BoolType => Ok(Type::Bool),
+            Token::StringType => Ok(Type::String),
+            Token::Any => Ok(Type::Any),
+            token => Err(ParseError {
+                message: "Expected type".to_string(),
+                token,
+            })
+        }
     }
 
-    self.expect(Token::RBrace)?;
-
-    Ok(Function {
-        name,
-        params,
-        body,
-    })
-}
-
-
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-        match self.peek().clone() {
+        match self.peek() {
             Token::Let => {
                 self.next(); // consume let
                 let name = match self.next() {
@@ -136,10 +166,19 @@ impl Parser {
                         token,
                     }),
                 };
+                
+                // Check for optional type annotation
+                let var_type = if matches!(self.peek(), Token::Colon) {
+                    self.next(); // consume colon
+                    self.parse_type()?
+                } else {
+                    Type::Any
+                };
+                
                 self.expect(Token::Equal)?;
                 let expr = self.parse_expr()?;
                 self.expect(Token::Semicolon)?;
-                Ok(Stmt::Let(name, expr))
+                Ok(Stmt::Let(name, var_type, expr))
             }
             Token::Print => {
                 self.next(); // consume print
@@ -151,7 +190,7 @@ impl Parser {
             }
             Token::Return => {
                 self.next(); // consume return
-                let expr = if *self.peek() == Token::Semicolon {
+                let expr = if matches!(self.peek(), Token::Semicolon) {
                     None
                 } else {
                     Some(self.parse_expr()?)
@@ -167,16 +206,16 @@ impl Parser {
                 self.expect(Token::LBrace)?;
 
                 let mut then_body = Vec::new();
-                while *self.peek() != Token::RBrace {
+                while !matches!(self.peek(), Token::RBrace) {
                     then_body.push(self.parse_stmt()?);
                 }
                 self.expect(Token::RBrace)?;
 
-                let else_body = if *self.peek() == Token::Else {
+                let else_body = if matches!(self.peek(), Token::Else) {
                     self.next(); // consume else
                     self.expect(Token::LBrace)?;
                     let mut body = Vec::new();
-                    while *self.peek() != Token::RBrace {
+                    while !matches!(self.peek(), Token::RBrace) {
                         body.push(self.parse_stmt()?);
                     }
                     self.expect(Token::RBrace)?;
@@ -195,12 +234,21 @@ impl Parser {
                 self.expect(Token::LBrace)?;
 
                 let mut body = Vec::new();
-                while *self.peek() != Token::RBrace {
+                while !matches!(self.peek(), Token::RBrace) {
                     body.push(self.parse_stmt()?);
                 }
                 self.expect(Token::RBrace)?;
 
                 Ok(Stmt::While(condition, body))
+            }
+            Token::LBrace => {
+                self.next(); // consume {
+                let mut stmts = Vec::new();
+                while !matches!(self.peek(), Token::RBrace) {
+                    stmts.push(self.parse_stmt()?);
+                }
+                self.expect(Token::RBrace)?;
+                Ok(Stmt::Block(stmts))
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -211,7 +259,19 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_equality()
+        self.parse_cast()
+    }
+
+    fn parse_cast(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_equality()?;
+
+        while matches!(self.peek(), Token::As) {
+            self.next(); // consume 'as'
+            let target_type = self.parse_type()?;
+            expr = Expr::Cast(Box::new(expr), target_type);
+        }
+
+        Ok(expr)
     }
 
     fn parse_equality(&mut self) -> Result<Expr, ParseError> {
@@ -301,15 +361,15 @@ impl Parser {
         let expr = self.parse_primary()?;
 
         if let Expr::Ident(name) = &expr {
-            if *self.peek() == Token::LParen {
+            if matches!(self.peek(), Token::LParen) {
                 self.next(); // consume (
                 let mut args = Vec::new();
 
-                while *self.peek() != Token::RParen {
+                while !matches!(self.peek(), Token::RParen) {
                     args.push(self.parse_expr()?);
-                    if *self.peek() == Token::Comma {
+                    if matches!(self.peek(), Token::Comma) {
                         self.next(); // consume comma
-                    } else if *self.peek() != Token::RParen {
+                    } else if !matches!(self.peek(), Token::RParen) {
                         return Err(ParseError {
                             message: "Expected ',' or ')' in function call".to_string(),
                             token: self.peek().clone(),
@@ -327,10 +387,16 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match self.next() {
-            Token::Number(n) => Ok(Expr::Number(n)),
+            Token::Literal(value) => {
+                Ok(Expr::Literal(value))
+            }
+            Token::String(s) => {
+                Ok(Expr::Literal(Value::Str(s)))
+            }
+            Token::Bool(b) => {
+                Ok(Expr::Literal(Value::Bool(b)))
+            }
             Token::Ident(s) => Ok(Expr::Ident(s)),
-            Token::String(s) => Ok(Expr::String(s)),
-            Token::Bool(b) => Ok(Expr::Bool(b)),
             Token::LParen => {
                 let expr = self.parse_expr()?;
                 self.expect(Token::RParen)?;
@@ -349,15 +415,21 @@ impl Parser {
 
     fn next(&mut self) -> Token {
         let tok = self.tokens.get(self.pos).cloned().unwrap_or(Token::EOF);
-        self.pos += 1;
+        if self.pos < self.tokens.len() {
+            self.pos += 1;
+        }
         tok
+    }
+
+    fn is_at_end(&self) -> bool {
+        matches!(self.peek(), Token::EOF) || self.pos >= self.tokens.len()
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
         let actual = self.next();
         if std::mem::discriminant(&actual) != std::mem::discriminant(&expected) {
             Err(ParseError {
-                message: format!("Expected {:?}", expected),
+                message: format!("Expected {:?}, got {:?}", expected, actual),
                 token: actual,
             })
         } else {

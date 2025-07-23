@@ -3,8 +3,8 @@ mod compiler;
 use compiler::lexer::Lexer;
 use compiler::parser::Parser;
 use compiler::interpreter::Interpreter;
-use compiler::codegen::generate_x86;
-use compiler::arm64::generate_arm64;
+// use compiler::codegen::generate_x86;
+// use compiler::arm64::generate_arm64;
 use std::process;
 use std::fs;
 
@@ -65,36 +65,36 @@ fn main() {
             }
         }) {
             // Optional: emit ARM64 or x86 assembly
-            if args.contains(&"--android".to_string()) {
-                let asm_code = generate_arm64(main_func);
-                let output_file = filename.replace(".astral", ".s");
-                if let Err(e) = fs::write(&output_file, asm_code) {
-                    eprintln!("Failed to write ARM64 assembly: {}", e);
-                    process::exit(1);
-                }
-                println!("ARM64 assembly written to: {}", output_file);
-            } else {
-                let asm_code = generate_x86(main_func);
-                let output_file = filename.replace(".astral", ".asm");
-                if let Err(e) = fs::write(&output_file, asm_code) {
-                    eprintln!("Failed to write x86 assembly: {}", e);
-                    process::exit(1);
-                }
-                println!("x86 assembly written to: {}", output_file);
-            }
+            // if args.contains(&"--android".to_string()) {
+            //     let asm_code = generate_arm64(main_func);
+            //     let output_file = filename.replace(".astral", ".s");
+            //     if let Err(e) = fs::write(&output_file, asm_code) {
+            //         eprintln!("Failed to write ARM64 assembly: {}", e);
+            //         process::exit(1);
+            //     }
+            //     println!("ARM64 assembly written to: {}", output_file);
+            // } else {
+            //     let asm_code = generate_x86(main_func);
+            //     let output_file = filename.replace(".astral", ".asm");
+            //     if let Err(e) = fs::write(&output_file, asm_code) {
+            //         eprintln!("Failed to write x86 assembly: {}", e);
+            //         process::exit(1);
+            //     }
+            //     println!("x86 assembly written to: {}", output_file);
+            // }
 
             // 🔥 Now ALSO emit LLVM IR if requested
-            if args.contains(&"--llvm".to_string()) {
-                use compiler::llvm::generate_llvm;
+            // if args.contains(&"--llvm".to_string()) {
+            //     use compiler::llvm::generate_llvm;
 
-                let llvm_ir = generate_llvm(main_func);
-                let llvm_file = filename.replace(".astral", ".ll");
-                if let Err(e) = fs::write(&llvm_file, llvm_ir) {
-                    eprintln!("Failed to write LLVM IR file '{}': {}", llvm_file, e);
-                    process::exit(1);
-                }
-                println!("LLVM IR written to: {}", llvm_file);
-            }
+            //     let llvm_ir = generate_llvm(main_func);
+            //     let llvm_file = filename.replace(".astral", ".ll");
+            //     if let Err(e) = fs::write(&llvm_file, llvm_ir) {
+            //         eprintln!("Failed to write LLVM IR file '{}': {}", llvm_file, e);
+            //         process::exit(1);
+            //     }
+            //     println!("LLVM IR written to: {}", llvm_file);
+            // }
 
             if args.contains(&"--interpreter".to_string()) {
                 let code = std::fs::read_to_string("examples/hello.astral").expect("Failed to read source");
