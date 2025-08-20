@@ -4,11 +4,11 @@ fn main() {
     print(y);
     let y = 59;
     let q = "ppk";
-    while ( x < y) {
-        print(q);
-    }
     let r = 8;
-    cow("jake", r);   
+    let k = to_string(y);
+    print(k);
+    cow("jake", r);
+       
 }
 
 fn cow(name: string, num: i8) {
@@ -16,7 +16,24 @@ fn cow(name: string, num: i8) {
     print(u);
     let x = true;
 
-    if (x) {
+    if x {
         print(name);
     }
+
+    let c = 0;
+
+    let r = match c {
+        2 => "one",
+        _ => "none", 
+    };
+
+    print(r);
+    boy(to_string("l"));
+}
+
+fn boy(name: string) {
+    let r = 9; 
+    let u = (count_len(r));
+    print("billy r " + to_string(u));
+    let y: str = "fff";
 }

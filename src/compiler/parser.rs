@@ -1,5 +1,9 @@
 use crate::compiler::ast::*;
 use crate::compiler::lexer::Token;
+use core::clone::Clone;
+use core::matches;
+use core::option::Option::Some;
+use core::result::Result::{self, Err, Ok};
 use std::fmt;
 
 #[derive(Debug)]
@@ -200,9 +204,9 @@ impl Parser {
             }
             Token::If => {
                 self.next(); // consume if
-                self.expect(Token::LParen)?;
+                // self.expect(Token::LParen)?;
                 let condition = self.parse_expr()?;
-                self.expect(Token::RParen)?;
+                // self.expect(Token::RParen)?;
                 self.expect(Token::LBrace)?;
 
                 let mut then_body = Vec::new();
@@ -288,6 +292,45 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.peek() {
+            
+            Token::Underscore => {
+                self.next();
+                Ok(Pattern::Wildcard)
+            }
+            Token::Ident(name) => {
+                Ok(Pattern::Identifier(name.clone()))
+            }
+            Token::Literal(_) | Token::Bool(_) | Token::StringLiteral(_) => {
+                let expr = self.parse_primary()?;
+                match expr {
+                    Expr::Literal(val) => Ok(Pattern::Value(val)),
+                    _ => Err(ParseError { message: "Expected literal".to_string(), token: self.peek().clone() })
+                    
+                }
+            }
+            token => Err(ParseError { message: "Expected pattern (Identifier, _, or literal)".to_string(), token: token.clone()})   
+        }
+    }
+
+    fn parse_match(&mut self) -> Result<Expr, ParseError> {
+        self.expect(Token::Match)?;
+        let match_expr = self.parse_expr()?;
+        self.expect(Token::LBrace)?;
+        let mut arms = Vec::new();
+        while !matches!(self.peek(), Token::RBrace) {
+            let pattern = self.parse_pattern()?;
+            self.expect(Token::Arrow)?;
+            let result_expr = self.parse_expr()?;
+            self.expect(Token::Comma)?;
+            arms.push((pattern, result_expr)); 
+        }
+        self.expect(Token::RBrace)?;
+        Ok(Expr::Match(Box::new(match_expr), arms))
+        
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
@@ -386,30 +429,34 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
-        match self.next() {
-            Token::Literal(value) => {
-                Ok(Expr::Literal(value))
-            }
-            Token::String(s) => {
-                Ok(Expr::Literal(Value::Str(s)))
-            }
-            Token::Bool(b) => {
-                Ok(Expr::Literal(Value::Bool(b)))
-            }
-            Token::Ident(s) => Ok(Expr::Ident(s)),
-            Token::LParen => {
-                let expr = self.parse_expr()?;
-                self.expect(Token::RParen)?;
-                Ok(expr)
-            }
-            token => Err(ParseError {
-                message: "Unexpected token in expression".to_string(),
-                token,
-            }),
-        }
+        match self.peek() {
+            Token::Match => self.parse_match(),
+            _ => match self.next() {
+                    
+                    Token::Literal(value) => {
+                        Ok(Expr::Literal(value))
+                    }
+                    Token::StringLiteral(s) => {
+                        Ok(Expr::Literal(Value::String(s)))
+                    }
+                    Token::Bool(b) => {
+                        Ok(Expr::Literal(Value::Bool(b)))
+                    }
+                    Token::Ident(s) => Ok(Expr::Ident(s)),
+                    Token::LParen => {
+                        let expr = self.parse_expr()?;
+                        self.expect(Token::RParen)?;
+                        Ok(expr)
+                    }
+                    token => Err(ParseError {
+                        message: "Unexpected token in expression".to_string(),
+                        token,
+                    }),
+                }
     }
+}
 
-    fn peek(&self) -> &Token {
+    fn peek(&mut self) -> &Token {
         self.tokens.get(self.pos).unwrap_or(&Token::EOF)
     }
 
@@ -421,12 +468,22 @@ impl Parser {
         tok
     }
 
-    fn is_at_end(&self) -> bool {
+    fn is_at_end(&mut self) -> bool {
         matches!(self.peek(), Token::EOF) || self.pos >= self.tokens.len()
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
         let actual = self.next();
+        // if self.peek() == &expected {
+        //     drop(actual);
+        //     Ok(())
+        // } else {
+        //     Err(ParseError {
+        //         message: format!("Expected {:?}, got {:?}", expected, actual),
+        //         token: self.peek().clone(),
+        //     })
+        // }
+        
         if std::mem::discriminant(&actual) != std::mem::discriminant(&expected) {
             Err(ParseError {
                 message: format!("Expected {:?}, got {:?}", expected, actual),

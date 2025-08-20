@@ -33,9 +33,19 @@ pub enum Type {
     U128,
     F32,
     F64,
+    Usize,
     Bool,
     String,
+    Str,
     Any
+}
+
+#[derive(Clone, Debug)]
+pub enum Pattern {
+    Value(Value),
+    Wildcard,
+    Identifier(String)
+    
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +56,7 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     UnaryOp(UnaryOperator, Box<Expr>),
     Cast(Box<Expr>, Type),
+    Match (Box<Expr>, Vec<(Pattern, Expr)>),
 }
 
 #[derive(Clone, Debug)]
@@ -95,8 +106,10 @@ pub enum Value {
     U128(u128),
     F32(f32),
     F64(f64),
+    Usize(usize),
     Bool(bool),
-    Str(String),
+    String(String),
+    Str(&'static str)
 }
 
 // Paste this below the enum
@@ -149,7 +162,15 @@ impl FromStr for Value {
             return Ok(Value::F64(v));
         }
 
-        Ok(Value::Str(s.to_string()))
+        if let Ok(v) = s.parse::<usize>() {
+            return Ok(Value::Usize(v));
+        }
+
+        // if let Ok(s) = s.parse::<&str>() {
+        //     return Ok(Value::Str(s));
+        // }
+
+        Ok(Value::String(s.to_string()))
     }
 }
 
@@ -171,12 +192,15 @@ impl Value {
             Value::U128(_) => Type::U128,
             Value::F32(_) => Type::F32,
             Value::F64(_) => Type::F64,
+            Value::Usize(_) => Type::Usize,
             Value::Bool(_) => Type::Bool,
-            Value::Str(_) => Type::String,
+            Value::Str(_) => Type::Str,
+            Value::String(_) => Type::String,
         }
     }
 
     pub fn to_string(&self) -> String {
+        
         match self {
             Value::I8(n) => n.to_string(),
             Value::I16(n) => n.to_string(),
@@ -190,8 +214,10 @@ impl Value {
             Value::U128(n) => n.to_string(),
             Value::F32(n) => n.to_string(),
             Value::F64(n) => n.to_string(),
+            Value::Usize(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
-            Value::Str(s) => s.clone(),
+            Value::Str(s) => s.to_string(),
+            Value::String(s) => s.clone(),
         }
     }
 
@@ -210,29 +236,32 @@ impl Value {
             (Value::F32(_), Type::F32) => true,
             (Value::F64(_), Type::F64) => true,
             (Value::Bool(_), Type::Bool) => true,
-            (Value::Str(_), Type::String) => true,
+            (Value::Str(_), Type::Str) => true,
+            (Value::String(_), Type::String) => true,
             _ => false,
         }
     }
 
     pub fn cast_to(&self, target_type: &Type) -> Option<Value> {
-    // If source and target types are the same, return self clone
-    if &self.get_type() == target_type {
-        return Some(self.clone());
-    }
+        // If source and target types are the same, return self clone
+        if &self.get_type() == target_type {
+            return Some(self.clone());
+        }
 
-    match (self, target_type) {
-        (Value::I8(n), Type::I16) => Some(Value::I16(*n as i16)),
-        (Value::I8(n), Type::I32) => Some(Value::I32(*n as i32)),
-        (Value::I8(n), Type::I64) => Some(Value::I64(*n as i64)),
-        (Value::I8(n), Type::I128) => Some(Value::I128(*n as i128)),
-        (Value::U8(n), Type::U16) => Some(Value::U16(*n as u16)),
-        (Value::U8(n), Type::U32) => Some(Value::U32(*n as u32)),
-        (Value::U8(n), Type::U64) => Some(Value::U64(*n as u64)),
-        (Value::U8(n), Type::U128) => Some(Value::U128(*n as u128)),
-        (Value::F32(n), Type::F64) => Some(Value::F64(*n as f64)),
-        _ => None,
+        match (self, target_type) {
+            (Value::I8(n), Type::I16) => Some(Value::I16(*n as i16)),
+            (Value::I8(n), Type::I32) => Some(Value::I32(*n as i32)),
+            (Value::I8(n), Type::I64) => Some(Value::I64(*n as i64)),
+            (Value::I8(n), Type::I128) => Some(Value::I128(*n as i128)),
+            (Value::U8(n), Type::U16) => Some(Value::U16(*n as u16)),
+            (Value::U8(n), Type::U32) => Some(Value::U32(*n as u32)),
+            (Value::U8(n), Type::U64) => Some(Value::U64(*n as u64)),
+            (Value::U8(n), Type::U128) => Some(Value::U128(*n as u128)),
+            (Value::F32(n), Type::F64) => Some(Value::F64(*n as f64)),
+            (Value::String(s), Type::Str) => Some(Value::Str(Box::leak(s.clone().into_boxed_str()))),
+            (Value::Str(s), Type::String) => Some(Value::String(s.to_string())),
+            _ => None,
+        }
     }
-}
 
 }

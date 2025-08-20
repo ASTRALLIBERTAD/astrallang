@@ -1,3 +1,5 @@
+use core::{option::Option::Some, result::Result::Ok, write};
+
 use crate::compiler::ast::{Type, Value};
 
 #[derive(Clone, Debug)]
@@ -5,10 +7,11 @@ pub enum Token {
     // Literals
     Literal(Value),
     Ident(String),
-    String(String),
+    StringLiteral(String),
     Bool(bool),
 
     // Keywords
+    Match,
     Let,
     Fn,
     If,
@@ -21,9 +24,10 @@ pub enum Token {
     // Type keywords
     I8, I16, I32, I64, I128,
     U8, U16, U32, U64, U128,
-    F32, F64,
+    F32, F64, Usize,
     BoolType,
     StringType,
+    StrType,
     Any,
 
     // Operators
@@ -49,6 +53,9 @@ pub enum Token {
     Semicolon,
     Comma,
     Colon,
+    // Sign
+    Arrow,
+    Underscore,
 
     // Special
     EOF,
@@ -57,10 +64,13 @@ pub enum Token {
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Token::Arrow => write!(f, "=>"),
+            Token::Underscore => write!(f, "_"),
             Token::Literal(v) => write!(f, "Literal({:?})", v),
             Token::Ident(s) => write!(f, "Ident({})", s),
-            Token::String(s) => write!(f, "\"{}\"", s),
+            Token::StringLiteral(s) => write!(f, "\"{}\"", s),
             Token::Bool(b) => write!(f, "Bool({})", b),
+            Token::Match => write!(f, "match"),
             Token::Let => write!(f, "let"),
             Token::Fn => write!(f, "fn"),
             Token::If => write!(f, "if"),
@@ -81,8 +91,10 @@ impl std::fmt::Display for Token {
             Token::U128 => write!(f, "u128"),
             Token::F32 => write!(f, "f32"),
             Token::F64 => write!(f, "f64"),
+            Token::Usize => write!(f, "usize"),
             Token::BoolType => write!(f, "bool"),
             Token::StringType => write!(f, "string"),
+            Token::StrType => write!(f, "str"),
             Token::Any => write!(f, "any"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
@@ -194,7 +206,10 @@ impl Lexer {
             '=' => {
                 if self.match_char('=') {
                     Ok(Some(Token::EqualEqual))
-                } else {
+                } else if self.match_char('>') {
+                    Ok(Some(Token::Arrow))
+                }
+                else {
                     Ok(Some(Token::Equal))
                 }
             }
@@ -227,6 +242,7 @@ impl Lexer {
             ',' => Ok(Some(Token::Comma)),
             ':' => Ok(Some(Token::Colon)),
             '"' => self.read_string(),
+            '_' => Ok(Some(Token::Underscore)),
             _ => {
                 if ch.is_ascii_digit() {
                     self.pos -= 1;
@@ -299,7 +315,7 @@ impl Lexer {
         }
         
         self.advance(); // closing "
-        Ok(Some(Token::String(string)))
+        Ok(Some(Token::StringLiteral(string)))
     }
 
     fn read_number(&mut self) -> Result<Token, LexError> {
@@ -449,6 +465,7 @@ impl Lexer {
 
         match ident.as_str() {
             // Keywords
+            "match" => Token::Match,
             "let" => Token::Let,
             "fn" => Token::Fn,
             "if" => Token::If,
@@ -473,8 +490,10 @@ impl Lexer {
             "u128" => Token::U128,
             "f32" => Token::F32,
             "f64" => Token::F64,
+            "usize" => Token::Usize,
             "bool" => Token::BoolType,
             "string" => Token::StringType,
+            "str" => Token::StrType,
             "any" => Token::Any,
             
             _ => Token::Ident(ident),

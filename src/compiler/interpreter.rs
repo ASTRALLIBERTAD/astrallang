@@ -1,4 +1,6 @@
-use crate::compiler::ast::*;
+use crate::compiler::{ast::*, builtins, value};
+use core::clone::Clone;
+use core::result::Result::{self, Err, Ok};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -64,7 +66,7 @@ impl Interpreter {
         &mut self,
         func: &FunctionDef,
         args: Vec<Value>,
-        parent_env: &mut HashMap<String, Value>,
+        mut parent_env: &mut HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if func.params.len() != args.len() {
             return Err(RuntimeError {
@@ -77,17 +79,17 @@ impl Interpreter {
         }
 
         // Create new scope with function parameters
-        let mut local_env = HashMap::new();
+        // let mut local_env = HashMap::new();
         for (param, arg) in func.params.iter().zip(args.iter()) {
             // Convert argument to parameter type if needed
             let converted_arg = self.convert_value_to_param_type(arg, &param.param_type)?;
-            local_env.insert(param.name.clone(), converted_arg);
+            parent_env.insert(param.name.clone(), converted_arg);
         }
 
         // Execute function body
-        match self.run_block(&func.body, &mut local_env)? {
+        match self.run_block(&func.body, &mut parent_env)? {
             Some(val) => Ok(val),
-            None => Ok(Value::I32(0)), // Default return value
+            none => Ok(Value::I32(0)), // Default return value
         }
     }
 
@@ -103,8 +105,8 @@ impl Interpreter {
             }
             ParamType::String => {
                 match value {
-                    Value::Str(_) => Ok(value.clone()),
-                    _ => Ok(Value::Str(value.to_string())),
+                    Value::String(_) => Ok(value.clone()),
+                    _ => Ok(Value::String(value.to_string())),
                 }
             }
             ParamType::Bool => {
@@ -125,7 +127,7 @@ impl Interpreter {
         for stmt in stmts {
             match self.eval_stmt(stmt, env)? {
                 Some(val) => return Ok(Some(val)), // Early return
-                None => continue,
+                none => continue,
             }
         }
         Ok(None)
@@ -159,7 +161,7 @@ impl Interpreter {
                 let val = self.eval_expr(expr, env)?;
                 Ok(Some(val))
             }
-            Stmt::Return(None) => Ok(Some(Value::I32(0))),
+            Stmt::Return(none) => Ok(Some(Value::I32(0))),
             Stmt::If(cond, then_body, else_body) => {
                 if self.eval_expr(cond, env)?.is_truthy() {
                     self.run_block(then_body, env)
@@ -190,12 +192,35 @@ impl Interpreter {
         }
     }
 
+    fn pattern_matches(&mut self, pat: &Pattern, val: &Value, env: &mut HashMap<String, Value>) -> Result<bool, RuntimeError> {
+        match pat {
+            Pattern::Value(pv) => Ok(pv == val),
+            Pattern::Wildcard => Ok(true),
+            Pattern::Identifier(name) => {
+                env.insert(name.clone(), val.clone());
+                Ok(true)
+            }
+            
+        }
+
+
+    }
+
     fn eval_expr(
         &mut self,
         expr: &Expr,
-        env: &HashMap<String, Value>,
+        mut env: &mut HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         match expr {
+            Expr::Match(expr, arms) => { 
+                let value = self.eval_expr(expr, env)?;
+                for (pat, result_expr) in arms {
+                    if self.pattern_matches(pat, &value, &mut env)? {
+                        return self.eval_expr(result_expr, env);                        
+                    }
+                }
+                Err(RuntimeError { message: "No match arm matched".to_string() })
+             }
             Expr::Literal(val) => Ok(val.clone()),
             Expr::Ident(name) => {
                 // Check local environment first, then globals
@@ -220,6 +245,50 @@ impl Interpreter {
                 self.cast_value(&val, target_type)
             }
             Expr::Call(name, args) => {
+
+                let mut evaluated_args = Vec::<Value>::new();
+                for arg in args {
+                    evaluated_args.push(self.eval_expr(arg, env)?);
+                    
+                }
+                let v = evaluated_args;
+
+                if name == "to_string" {
+                    return builtins::to_string(v);
+                }
+                if name == "count_len" {
+                    return builtins::count_len(v);
+                }
+
+                
+
+                // if name == "to_string" {
+                //     if evaluated_args.len() != 1 {
+                //         return Err(RuntimeError { message: "to_string() Expects one argument".to_string() });
+                //     }
+                //     let v = &evaluated_args[0];
+                //     let s = match v {
+                //         Value::I8(n) => n.to_string(),
+                //         Value::I16(n) => n.to_string(),
+                //         Value::I32(n) => n.to_string(),
+                //         Value::I64(n) => n.to_string(),
+                //         Value::I128(n) => n.to_string(),
+                //         Value::U8(n) => n.to_string(),
+                //         Value::U16(n) => n.to_string(),
+                //         Value::U32(n) => n.to_string(),
+                //         Value::U64(n) => n.to_string(),
+                //         Value::U128(n) => n.to_string(),
+                //         Value::F32(n) => n.to_string(),
+                //         Value::F64(n) => n.to_string(),
+                //         Value::Bool(b) => b.to_string(),
+                //         Value::Str(s) => s.clone(),
+                //         _ => return Err(RuntimeError { message: "Cannot convert to string".to_string() }),
+                        
+                //     };
+
+                //     return Ok(Value::Str(s));
+                // }
+                
                 // Get function definition
                 let func = self
                     .functions
@@ -388,8 +457,8 @@ impl Interpreter {
             }),
 
             // String operations
-            (Value::Str(a), Value::Str(b)) => Ok(match op {
-                BinaryOperator::Add => Value::Str(format!("{}{}", a, b)),
+            (Value::String(a), Value::String(b)) => Ok(match op {
+                BinaryOperator::Add => Value::String(format!("{}{}", a, b)),
                 BinaryOperator::Equal => Value::Bool(a == b),
                 BinaryOperator::NotEqual => Value::Bool(a != b),
                 BinaryOperator::Less => Value::Bool(a < b),
@@ -519,13 +588,16 @@ impl Interpreter {
             (Value::I32(n), Type::F64) => Ok(Value::F64(*n as f64)),
             (Value::U8(n), Type::F32) => Ok(Value::F32(*n as f32)),
             (Value::U16(n), Type::F32) => Ok(Value::F32(*n as f32)),
+
+            //usize conversion
+            (Value::Usize(n), Type::Usize) => Ok(Value::Usize(*n as usize)),
             
             // Boolean conversions
             (Value::Bool(b), Type::I32) => Ok(Value::I32(if *b { 1 } else { 0 })),
             (Value::I32(n), Type::Bool) => Ok(Value::Bool(*n != 0)),
             
             // String conversions
-            (val, Type::String) => Ok(Value::Str(val.to_string())),
+            (val, Type::String) => Ok(Value::String(val.to_string())),
             
             _ => Err(RuntimeError {
                 message: format!("Cannot cast {:?} to {:?}", val, target_type),
@@ -558,7 +630,9 @@ impl Truthy for Value {
             Value::U128(n) => *n != 0,
             Value::F32(n) => *n != 0.0,
             Value::F64(n) => *n != 0.0,
+            Value::Usize(n) => *n != 0,
             Value::Str(s) => !s.is_empty(),
+            Value::String(s) => !s.is_empty(),
         }
     }
 }
