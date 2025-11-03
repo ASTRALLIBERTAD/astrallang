@@ -32,99 +32,34 @@ impl BuiltinRegistry {
 
 use core::result::Result::{self, Err, Ok};
 
-use crate::compiler::{ast::{self, Value}, interpreter::RuntimeError};
+use crate::compiler::{ast::{self, Value}, interpreter::RuntimeError, macros::{impl_unary_op, value_length, value_to_string}};
 
 
-pub fn to_string(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
+fn to_string(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
     
     if args.len() != 1 {
         return Err(RuntimeError { message: "to_string expects one argument".to_string() });
     }
 
-    // let v = &args[0];
-
-    // match v {
-    //     Value::I8(i) => Ok(Value::Str(i.to_string())),
-    //     Value::I16(i) => Ok(Value::Str(i.to_string())),
-    //     Value::I32(i) => Ok(Value::Str(i.to_string())),
-    //     Value::I64(i) => Ok(Value::Str(i.to_string())),
-    //     Value::I128(i) => Ok(Value::Str(i.to_string())),
-    //     Value::U8(u) => Ok(Value::Str(u.to_string())),
-    //     Value::U16(u) => Ok(Value::Str(u.to_string())),
-    //     Value::U32(u) => Ok(Value::Str(u.to_string())),
-    //     Value::U64(u) => Ok(Value::Str(u.to_string())),
-    //     Value::U128(u) => Ok(Value::Str(u.to_string())),
-    //     Value::F32(f) => Ok(Value::Str(f.to_string())),
-    //     Value::F64(f) => Ok(Value::Str(f.to_string())),
-    //     Value::Usize(u) => Ok(Value::Str(u.to_string())),
-    //     Value::Bool(b) => Ok(Value::Str(b.to_string())),
-    //     _ => Err(RuntimeError { message: "Cannot convert to string".to_string() })
-    // }
-
-    let v = &args[0];
-    let s = match v {
-                        Value::I8(n) => n.to_string(),
-                        Value::I16(n) => n.to_string(),
-                        Value::I32(n) => n.to_string(),
-                        Value::I64(n) => n.to_string(),
-                        Value::I128(n) => n.to_string(),
-                        Value::U8(n) => n.to_string(),
-                        Value::U16(n) => n.to_string(),
-                        Value::U32(n) => n.to_string(),
-                        Value::U64(n) => n.to_string(),
-                        Value::U128(n) => n.to_string(),
-                        Value::F32(n) => n.to_string(),
-                        Value::F64(n) => n.to_string(),
-                        Value::Usize(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        Value::String(s) => s.clone(),
-                        _ => return Err(RuntimeError { message: "Cannot convert to string".to_string() }),
-                        
-                    };
-    return Ok(Value::String(s));
+    return Ok(Value::String(value_to_string!(&args[0])));
 
 }
 
-pub fn count_len(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
-    // match &args[0] {
-    //     Value::I8(i) => Ok(Value::Usize(i.to_string().len())),
-    //     Value::I16(i) => Ok(Value::Usize(i.to_string().len())),
-    //     Value::I32(i) => Ok(Value::Usize(i.to_string().len())),
-    //     Value::I64(i) => Ok(Value::Usize(i.to_string().len())),
-    //     Value::I128(i) => Ok(Value::Usize(i.to_string().len())),
-    //     Value::U8(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::U16(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::U32(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::U64(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::U128(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::F32(f) => Ok(Value::Usize(f.to_string().len())),
-    //     Value::F64(f) => Ok(Value::Usize(f.to_string().len())),
-    //     Value::Usize(u) => Ok(Value::Usize(u.to_string().len())),
-    //     Value::Bool(b) => Ok(Value::Usize(b.to_string().len())),
-    //     Value::Str(s) => Ok(Value::Usize(s.to_string().len())),
-    //     _ => Err(RuntimeError { message: "Cannot convert to string".to_string() })
-    // }
-
-    let v = &args[0];
-    let s = match v {
-                        Value::I8(n) => n.to_string().len(),
-                        Value::I16(n) => n.to_string().len(),
-                        Value::I32(n) => n.to_string().len(),
-                        Value::I64(n) => n.to_string().len(),
-                        Value::I128(n) => n.to_string().len(),
-                        Value::U8(n) => n.to_string().len(),
-                        Value::U16(n) => n.to_string().len(),
-                        Value::U32(n) => n.to_string().len(),
-                        Value::U64(n) => n.to_string().len(),
-                        Value::U128(n) => n.to_string().len(),
-                        Value::F32(n) => n.to_string().len(),
-                        Value::F64(n) => n.to_string().len(),
-                        Value::Usize(n) => n.clone(),
-                        Value::Bool(b) => b.to_string().len(),
-                        Value::String(s) => s.len(),
-                        _ => return Err(RuntimeError { message: "Cannot convert to string".to_string() }),
-                        
-                    };
-    return Ok(Value::Usize(s));
+fn count_len(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError { message: "count_len expects one argument".to_string() });
+    }
+    return Ok(Value::Usize(value_length!(&args[0])));
 }
+
+// fn negate(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
+//     if args.len() != 1 {
+//         return Err(RuntimeError { message: "negate expects one argument".to_string() });
+//     }
+
+//     return Ok(impl_unary_op!(args[0], -, signed_only));
+
+
+// }
+
 

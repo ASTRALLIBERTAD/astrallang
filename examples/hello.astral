@@ -15,8 +15,8 @@ fn main() {
     let sum = x + y;
     
     print(to_string(sum));
-    print(count_len("hello"));
-    
+    print(count_len(9090990));
+    // comment
     let result = match x {
         10 => "ten",
         20 => "twenty",
