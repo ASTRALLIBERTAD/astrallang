@@ -35,5 +35,5 @@ fn boy(name: string) {
     let r = 9; 
     let u = (count_len(r));
     print("billy r " + to_string(u));
-    let y: str = "fff";
+    let y = "fff";
 }

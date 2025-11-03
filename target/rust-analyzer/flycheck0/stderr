@@ -1,0 +1,58 @@
+   0.053814400s  INFO prepare_target{force=false package_id=astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang) target="astrallang"}: cargo::core::compiler::fingerprint: fingerprint error for astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang)/Check { test: false }/TargetInner { name: "astrallang", doc: true, ..: with_path("C:\\Users\\Boss\\Documents\\astrallang\\astrallang\\src\\main.rs", Edition2024) }
+   0.053966700s  INFO prepare_target{force=false package_id=astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang) target="astrallang"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\Boss\Documents\astrallang\astrallang\target\debug\.fingerprint\astrallang-4915c1b660bf0043\bin-astrallang`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_path
+   6: git_filter_source_path
+   7: git_filter_source_path
+   8: git_filter_source_path
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.092495800s  INFO prepare_target{force=false package_id=astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang) target="astrallang"}: cargo::core::compiler::fingerprint: fingerprint error for astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang)/Check { test: true }/TargetInner { name: "astrallang", doc: true, ..: with_path("C:\\Users\\Boss\\Documents\\astrallang\\astrallang\\src\\main.rs", Edition2024) }
+   0.092541600s  INFO prepare_target{force=false package_id=astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang) target="astrallang"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\Boss\Documents\astrallang\astrallang\target\debug\.fingerprint\astrallang-334c174a3735e985\test-bin-astrallang`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_path
+   6: git_filter_source_path
+   7: git_filter_source_path
+   8: git_filter_source_path
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+    Checking astrallang v0.1.0 (C:\Users\Boss\Documents\astrallang\astrallang)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.34s

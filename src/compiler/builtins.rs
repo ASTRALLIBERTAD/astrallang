@@ -94,6 +94,5 @@ pub fn count_len(args: Vec<ast::Value>) -> Result<Value, RuntimeError> {
                         
                     };
     return Ok(Value::Usize(s));
-
-
 }
+
