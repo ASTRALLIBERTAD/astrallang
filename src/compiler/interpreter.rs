@@ -1,8 +1,14 @@
-use crate::compiler::{ast::*, builtins, value};
-use core::clone::Clone;
-use core::result::Result::{self, Err, Ok};
+// src/compiler/interpreter.rs
+// Refactored version using macros
+
+use crate::compiler::ast::*;
+use crate::compiler::builtins::BuiltinRegistry;
 use std::collections::HashMap;
 use std::fmt;
+
+// Import macros
+#[macro_use]
+use crate::compiler::macros::*;
 
 #[derive(Debug)]
 pub struct RuntimeError {
@@ -17,6 +23,8 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+type Result<T> = std::result::Result<T, RuntimeError>;
+
 #[derive(Clone, Debug)]
 pub struct FunctionDef {
     pub params: Vec<Param>,
@@ -26,6 +34,7 @@ pub struct FunctionDef {
 pub struct Interpreter {
     globals: HashMap<String, Value>,
     functions: HashMap<String, FunctionDef>,
+    builtins: BuiltinRegistry,
 }
 
 impl Interpreter {
@@ -33,10 +42,11 @@ impl Interpreter {
         Interpreter {
             globals: HashMap::new(),
             functions: HashMap::new(),
+            builtins: BuiltinRegistry::new(),
         }
     }
 
-    pub fn run(&mut self, stmts: &[Stmt]) -> Result<(), RuntimeError> {
+    pub fn run(&mut self, stmts: &[Stmt]) -> Result<()> {
         // First pass: collect all function definitions
         for stmt in stmts {
             if let Stmt::Function(func) = stmt {
@@ -66,8 +76,8 @@ impl Interpreter {
         &mut self,
         func: &FunctionDef,
         args: Vec<Value>,
-        mut parent_env: &mut HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
+        parent_env: &mut HashMap<String, Value>,
+    ) -> Result<Value> {
         if func.params.len() != args.len() {
             return Err(RuntimeError {
                 message: format!(
@@ -79,42 +89,35 @@ impl Interpreter {
         }
 
         // Create new scope with function parameters
-        // let mut local_env = HashMap::new();
         for (param, arg) in func.params.iter().zip(args.iter()) {
-            // Convert argument to parameter type if needed
             let converted_arg = self.convert_value_to_param_type(arg, &param.param_type)?;
             parent_env.insert(param.name.clone(), converted_arg);
         }
 
         // Execute function body
-        match self.run_block(&func.body, &mut parent_env)? {
+        match self.run_block(&func.body, parent_env)? {
             Some(val) => Ok(val),
-            none => Ok(Value::I32(0)), // Default return value
+            None => Ok(Value::I32(0)),
         }
     }
 
-    fn convert_value_to_param_type(&self, value: &Value, param_type: &ParamType) -> Result<Value, RuntimeError> {
+    fn convert_value_to_param_type(&self, value: &Value, param_type: &ParamType) -> Result<Value> {
         match param_type {
             ParamType::Number(target_type) => {
                 if let Some(converted) = value.cast_to(target_type) {
                     Ok(converted)
                 } else {
-                    // Try manual conversion
                     self.cast_value(value, target_type)
                 }
             }
-            ParamType::String => {
-                match value {
-                    Value::String(_) => Ok(value.clone()),
-                    _ => Ok(Value::String(value.to_string())),
-                }
-            }
-            ParamType::Bool => {
-                match value {
-                    Value::Bool(_) => Ok(value.clone()),
-                    _ => Ok(Value::Bool(value.is_truthy())),
-                }
-            }
+            ParamType::String => match value {
+                Value::String(_) => Ok(value.clone()),
+                _ => Ok(Value::String(value_to_string!(value))),
+            },
+            ParamType::Bool => match value {
+                Value::Bool(_) => Ok(value.clone()),
+                _ => Ok(Value::Bool(is_truthy!(value))),
+            },
             ParamType::Any => Ok(value.clone()),
         }
     }
@@ -123,11 +126,11 @@ impl Interpreter {
         &mut self,
         stmts: &[Stmt],
         env: &mut HashMap<String, Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<Value>> {
         for stmt in stmts {
             match self.eval_stmt(stmt, env)? {
-                Some(val) => return Ok(Some(val)), // Early return
-                none => continue,
+                Some(val) => return Ok(Some(val)),
+                None => continue,
             }
         }
         Ok(None)
@@ -137,12 +140,11 @@ impl Interpreter {
         &mut self,
         stmt: &Stmt,
         env: &mut HashMap<String, Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<Value>> {
         match stmt {
             Stmt::Let(name, type_hint, expr) => {
                 let val = self.eval_expr(expr, env)?;
                 
-                // Convert value to specified type if not Any
                 let final_val = if *type_hint != Type::Any {
                     self.cast_value(&val, type_hint)?
                 } else {
@@ -154,16 +156,16 @@ impl Interpreter {
             }
             Stmt::Print(expr) => {
                 let val = self.eval_expr(expr, env)?;
-                println!("{}", val.to_string());
+                println!("{}", value_to_string!(&val));
                 Ok(None)
             }
             Stmt::Return(Some(expr)) => {
                 let val = self.eval_expr(expr, env)?;
                 Ok(Some(val))
             }
-            Stmt::Return(none) => Ok(Some(Value::I32(0))),
+            Stmt::Return(None) => Ok(Some(Value::I32(0))),
             Stmt::If(cond, then_body, else_body) => {
-                if self.eval_expr(cond, env)?.is_truthy() {
+                if is_truthy!(&self.eval_expr(cond, env)?) {
                     self.run_block(then_body, env)
                 } else if let Some(else_body) = else_body {
                     self.run_block(else_body, env)
@@ -172,15 +174,14 @@ impl Interpreter {
                 }
             }
             Stmt::While(cond, body) => {
-                while self.eval_expr(cond, env)?.is_truthy() {
+                while is_truthy!(&self.eval_expr(cond, env)?) {
                     if let Some(val) = self.run_block(body, env)? {
-                        return Ok(Some(val)); // Handle return from within loop
+                        return Ok(Some(val));
                     }
                 }
                 Ok(None)
             }
             Stmt::Block(stmts) => {
-                // Create new scope for block
                 let mut block_env = env.clone();
                 self.run_block(stmts, &mut block_env)
             }
@@ -188,11 +189,16 @@ impl Interpreter {
                 self.eval_expr(expr, env)?;
                 Ok(None)
             }
-            Stmt::Function(_) => Ok(None), // Function definitions are handled in first pass
+            Stmt::Function(_) => Ok(None),
         }
     }
 
-    fn pattern_matches(&mut self, pat: &Pattern, val: &Value, env: &mut HashMap<String, Value>) -> Result<bool, RuntimeError> {
+    fn pattern_matches(
+        &mut self,
+        pat: &Pattern,
+        val: &Value,
+        env: &mut HashMap<String, Value>,
+    ) -> Result<bool> {
         match pat {
             Pattern::Value(pv) => Ok(pv == val),
             Pattern::Wildcard => Ok(true),
@@ -200,30 +206,28 @@ impl Interpreter {
                 env.insert(name.clone(), val.clone());
                 Ok(true)
             }
-            
         }
-
-
     }
 
     fn eval_expr(
         &mut self,
         expr: &Expr,
-        mut env: &mut HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
+        env: &mut HashMap<String, Value>,
+    ) -> Result<Value> {
         match expr {
-            Expr::Match(expr, arms) => { 
+            Expr::Match(expr, arms) => {
                 let value = self.eval_expr(expr, env)?;
                 for (pat, result_expr) in arms {
-                    if self.pattern_matches(pat, &value, &mut env)? {
-                        return self.eval_expr(result_expr, env);                        
+                    if self.pattern_matches(pat, &value, env)? {
+                        return self.eval_expr(result_expr, env);
                     }
                 }
-                Err(RuntimeError { message: "No match arm matched".to_string() })
-             }
+                Err(RuntimeError {
+                    message: "No match arm matched".to_string(),
+                })
+            }
             Expr::Literal(val) => Ok(val.clone()),
             Expr::Ident(name) => {
-                // Check local environment first, then globals
                 env.get(name)
                     .or_else(|| self.globals.get(name))
                     .cloned()
@@ -245,51 +249,17 @@ impl Interpreter {
                 self.cast_value(&val, target_type)
             }
             Expr::Call(name, args) => {
-
                 let mut evaluated_args = Vec::<Value>::new();
                 for arg in args {
                     evaluated_args.push(self.eval_expr(arg, env)?);
-                    
-                }
-                let v = evaluated_args;
-
-                if name == "to_string" {
-                    return builtins::to_string(v);
-                }
-                if name == "count_len" {
-                    return builtins::count_len(v);
                 }
 
-                
+                // Check builtin functions first
+                if let Some(result) = self.builtins.call(name, evaluated_args.clone()) {
+                    return result;
+                }
 
-                // if name == "to_string" {
-                //     if evaluated_args.len() != 1 {
-                //         return Err(RuntimeError { message: "to_string() Expects one argument".to_string() });
-                //     }
-                //     let v = &evaluated_args[0];
-                //     let s = match v {
-                //         Value::I8(n) => n.to_string(),
-                //         Value::I16(n) => n.to_string(),
-                //         Value::I32(n) => n.to_string(),
-                //         Value::I64(n) => n.to_string(),
-                //         Value::I128(n) => n.to_string(),
-                //         Value::U8(n) => n.to_string(),
-                //         Value::U16(n) => n.to_string(),
-                //         Value::U32(n) => n.to_string(),
-                //         Value::U64(n) => n.to_string(),
-                //         Value::U128(n) => n.to_string(),
-                //         Value::F32(n) => n.to_string(),
-                //         Value::F64(n) => n.to_string(),
-                //         Value::Bool(b) => b.to_string(),
-                //         Value::Str(s) => s.clone(),
-                //         _ => return Err(RuntimeError { message: "Cannot convert to string".to_string() }),
-                        
-                //     };
-
-                //     return Ok(Value::Str(s));
-                // }
-                
-                // Get function definition
+                // Look up user-defined function
                 let func = self
                     .functions
                     .get(name)
@@ -298,15 +268,8 @@ impl Interpreter {
                     })?
                     .clone();
 
-                // Evaluate arguments
-                let mut arg_values = Vec::new();
-                for arg in args {
-                    arg_values.push(self.eval_expr(arg, env)?);
-                }
-
-                // Create a mutable copy of env for the function call
                 let mut temp_env = env.clone();
-                self.call_function(&func, arg_values, &mut temp_env)
+                self.call_function(&func, evaluated_args, &mut temp_env)
             }
         }
     }
@@ -316,183 +279,68 @@ impl Interpreter {
         left: &Value,
         op: &BinaryOperator,
         right: &Value,
-    ) -> Result<Value, RuntimeError> {
-        // Try to promote types to a common type for arithmetic operations
+    ) -> Result<Value> {
+        // Try to promote types to a common type
         let (promoted_left, promoted_right) = self.promote_numeric_types(left, right)?;
         
-        match (&promoted_left, &promoted_right) {
-            // I8 operations
-            (Value::I8(a), Value::I8(b)) => Ok(match op {
-                BinaryOperator::Add => Value::I8(a.wrapping_add(*b)),
-                BinaryOperator::Subtract => Value::I8(a.wrapping_sub(*b)),
-                BinaryOperator::Multiply => Value::I8(a.wrapping_mul(*b)),
-                BinaryOperator::Divide => {
-                    if *b == 0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::I8(a / b)
+        use BinaryOperator::*;
+        
+        match op {
+            Add => {
+                // Special case: string concatenation
+                if let (Value::String(a), Value::String(b)) = (&promoted_left, &promoted_right) {
+                    return Ok(Value::String(format!("{}{}", a, b)));
                 }
-                BinaryOperator::Modulo => {
-                    if *b == 0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::I8(a % b)
+                impl_arithmetic_op!(&promoted_left, &promoted_right, +)
+            }
+            Subtract => impl_arithmetic_op!(&promoted_left, &promoted_right, -),
+            Multiply => impl_arithmetic_op!(&promoted_left, &promoted_right, *),
+            Divide => {
+                // Check for division by zero
+                if self.is_zero(&promoted_right) {
+                    return Err(RuntimeError {
+                        message: "Division by zero".into(),
+                    });
                 }
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-            
-            // I16 operations
-            (Value::I16(a), Value::I16(b)) => Ok(match op {
-                BinaryOperator::Add => Value::I16(a.wrapping_add(*b)),
-                BinaryOperator::Subtract => Value::I16(a.wrapping_sub(*b)),
-                BinaryOperator::Multiply => Value::I16(a.wrapping_mul(*b)),
-                BinaryOperator::Divide => {
-                    if *b == 0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::I16(a / b)
+                impl_arithmetic_op!(&promoted_left, &promoted_right, /)
+            }
+            Modulo => {
+                if self.is_zero(&promoted_right) {
+                    return Err(RuntimeError {
+                        message: "Modulo by zero".into(),
+                    });
                 }
-                BinaryOperator::Modulo => {
-                    if *b == 0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::I16(a % b)
-                }
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-
-            // I32 operations
-            (Value::I32(a), Value::I32(b)) => Ok(match op {
-                BinaryOperator::Add => Value::I32(a.wrapping_add(*b)),
-                BinaryOperator::Subtract => Value::I32(a.wrapping_sub(*b)),
-                BinaryOperator::Multiply => Value::I32(a.wrapping_mul(*b)),
-                BinaryOperator::Divide => {
-                    if *b == 0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::I32(a / b)
-                }
-                BinaryOperator::Modulo => {
-                    if *b == 0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::I32(a % b)
-                }
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-
-            // I64 operations
-            (Value::I64(a), Value::I64(b)) => Ok(match op {
-                BinaryOperator::Add => Value::I64(a.wrapping_add(*b)),
-                BinaryOperator::Subtract => Value::I64(a.wrapping_sub(*b)),
-                BinaryOperator::Multiply => Value::I64(a.wrapping_mul(*b)),
-                BinaryOperator::Divide => {
-                    if *b == 0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::I64(a / b)
-                }
-                BinaryOperator::Modulo => {
-                    if *b == 0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::I64(a % b)
-                }
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-
-            // F32 operations
-            (Value::F32(a), Value::F32(b)) => Ok(match op {
-                BinaryOperator::Add => Value::F32(a + b),
-                BinaryOperator::Subtract => Value::F32(a - b),
-                BinaryOperator::Multiply => Value::F32(a * b),
-                BinaryOperator::Divide => {
-                    if *b == 0.0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::F32(a / b)
-                }
-                BinaryOperator::Modulo => {
-                    if *b == 0.0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::F32(a % b)
-                }
-                BinaryOperator::Equal => Value::Bool((a - b).abs() < f32::EPSILON),
-                BinaryOperator::NotEqual => Value::Bool((a - b).abs() >= f32::EPSILON),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-
-            // F64 operations
-            (Value::F64(a), Value::F64(b)) => Ok(match op {
-                BinaryOperator::Add => Value::F64(a + b),
-                BinaryOperator::Subtract => Value::F64(a - b),
-                BinaryOperator::Multiply => Value::F64(a * b),
-                BinaryOperator::Divide => {
-                    if *b == 0.0 { return Err(RuntimeError { message: "Division by zero".into() }); }
-                    Value::F64(a / b)
-                }
-                BinaryOperator::Modulo => {
-                    if *b == 0.0 { return Err(RuntimeError { message: "Modulo by zero".into() }); }
-                    Value::F64(a % b)
-                }
-                BinaryOperator::Equal => Value::Bool((a - b).abs() < f64::EPSILON),
-                BinaryOperator::NotEqual => Value::Bool((a - b).abs() >= f64::EPSILON),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-            }),
-
-            // Boolean operations
-            (Value::Bool(a), Value::Bool(b)) => Ok(match op {
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                _ => return Err(RuntimeError {
-                    message: format!("Unsupported operation {:?} for boolean values", op),
-                }),
-            }),
-
-            // String operations
-            (Value::String(a), Value::String(b)) => Ok(match op {
-                BinaryOperator::Add => Value::String(format!("{}{}", a, b)),
-                BinaryOperator::Equal => Value::Bool(a == b),
-                BinaryOperator::NotEqual => Value::Bool(a != b),
-                BinaryOperator::Less => Value::Bool(a < b),
-                BinaryOperator::Greater => Value::Bool(a > b),
-                BinaryOperator::LessEqual => Value::Bool(a <= b),
-                BinaryOperator::GreaterEqual => Value::Bool(a >= b),
-                _ => return Err(RuntimeError {
-                    message: format!("Unsupported operation {:?} for string values", op),
-                }),
-            }),
-
-            _ => Err(RuntimeError {
-                message: format!("Type mismatch in binary operation: {:?} {:?} {:?}", promoted_left, op, promoted_right),
-            }),
+                impl_arithmetic_op!(&promoted_left, &promoted_right, %)
+            }
+            Equal => Ok(Value::Bool(promoted_left == promoted_right)),
+            NotEqual => Ok(Value::Bool(promoted_left != promoted_right)),
+            Less => impl_comparison_op!(&promoted_left, &promoted_right, <),
+            Greater => impl_comparison_op!(&promoted_left, &promoted_right, >),
+            LessEqual => impl_comparison_op!(&promoted_left, &promoted_right, <=),
+            GreaterEqual => impl_comparison_op!(&promoted_left, &promoted_right, >=),
         }
     }
 
-    fn promote_numeric_types(&self, left: &Value, right: &Value) -> Result<(Value, Value), RuntimeError> {
-        // Implement type promotion rules
+    fn is_zero(&self, val: &Value) -> bool {
+        match val {
+            Value::I8(0) | Value::I16(0) | Value::I32(0) | Value::I64(0) | Value::I128(0) => true,
+            Value::U8(0) | Value::U16(0) | Value::U32(0) | Value::U64(0) | Value::U128(0) => true,
+            Value::F32(n) => *n == 0.0,
+            Value::F64(n) => *n == 0.0,
+            Value::Usize(0) => true,
+            _ => false,
+        }
+    }
+
+    fn promote_numeric_types(&self, left: &Value, right: &Value) -> Result<(Value, Value)> {
+        // If same types, no promotion needed
+        if std::mem::discriminant(left) == std::mem::discriminant(right) {
+            return Ok((left.clone(), right.clone()));
+        }
+
+        // Promotion rules (simplified)
         match (left, right) {
-            // Same types - no promotion needed
-            (Value::I8(_), Value::I8(_)) |
-            (Value::I16(_), Value::I16(_)) |
-            (Value::I32(_), Value::I32(_)) |
-            (Value::I64(_), Value::I64(_)) |
-            (Value::F32(_), Value::F32(_)) |
-            (Value::F64(_), Value::F64(_)) => Ok((left.clone(), right.clone())),
-            
             // Integer promotions to larger types
-            (Value::U8(a), Value::U8(b)) => Ok((Value::U8(*a), Value::U8(*b))),
-            (Value::U8(a), Value::U16(b)) => Ok((Value::U16(*a as u16), Value::U16(*b))),
-            (Value::U16(a), Value::U8(b)) => Ok((Value::U16(*a), Value::U16(*b as u16))),
-            
-            // Mixed integer types - promote to largest
             (Value::I8(a), Value::I16(b)) => Ok((Value::I16(*a as i16), Value::I16(*b))),
             (Value::I16(a), Value::I8(b)) => Ok((Value::I16(*a), Value::I16(*b as i16))),
             (Value::I8(a), Value::I32(b)) => Ok((Value::I32(*a as i32), Value::I32(*b))),
@@ -500,47 +348,20 @@ impl Interpreter {
             (Value::I16(a), Value::I32(b)) => Ok((Value::I32(*a as i32), Value::I32(*b))),
             (Value::I32(a), Value::I16(b)) => Ok((Value::I32(*a), Value::I32(*b as i32))),
             
-            // Unsigned to signed promotions
-            (Value::U8(a), Value::I16(b)) => Ok((Value::I16(*a as i16), Value::I16(*b))),
-            (Value::I16(a), Value::U8(b)) => Ok((Value::I16(*a), Value::I16(*b as i16))),
-            (Value::U8(a), Value::I32(b)) => Ok((Value::I32(*a as i32), Value::I32(*b))),
-            (Value::I32(a), Value::U8(b)) => Ok((Value::I32(*a), Value::I32(*b as i32))),
-            
             // Float promotions
-            (Value::I8(a), Value::F32(b)) => Ok((Value::F32(*a as f32), Value::F32(*b))),
-            (Value::F32(a), Value::I8(b)) => Ok((Value::F32(*a), Value::F32(*b as f32))),
-            (Value::I16(a), Value::F32(b)) => Ok((Value::F32(*a as f32), Value::F32(*b))),
-            (Value::F32(a), Value::I16(b)) => Ok((Value::F32(*a), Value::F32(*b as f32))),
+            (Value::F32(a), Value::F64(b)) => Ok((Value::F64(*a as f64), Value::F64(*b))),
+            (Value::F64(a), Value::F32(b)) => Ok((Value::F64(*a), Value::F64(*b as f64))),
             (Value::I32(a), Value::F32(b)) => Ok((Value::F32(*a as f32), Value::F32(*b))),
             (Value::F32(a), Value::I32(b)) => Ok((Value::F32(*a), Value::F32(*b as f32))),
             
-            (Value::F32(a), Value::F64(b)) => Ok((Value::F64(*a as f64), Value::F64(*b))),
-            (Value::F64(a), Value::F32(b)) => Ok((Value::F64(*a), Value::F64(*b as f64))),
-            
-            // Non-numeric types or incompatible combinations
+            // Default: no promotion
             _ => Ok((left.clone(), right.clone())),
         }
     }
 
-    fn eval_unary_op(&self, op: &UnaryOperator, val: &Value) -> Result<Value, RuntimeError> {
+    fn eval_unary_op(&self, op: &UnaryOperator, val: &Value) -> Result<Value> {
         match op {
-            UnaryOperator::Minus => match val {
-                Value::I8(n) => Ok(Value::I8(-n)),
-                Value::I16(n) => Ok(Value::I16(-n)),
-                Value::I32(n) => Ok(Value::I32(-n)),
-                Value::I64(n) => Ok(Value::I64(-n)),
-                Value::I128(n) => Ok(Value::I128(-n)),
-                Value::F32(n) => Ok(Value::F32(-n)),
-                Value::F64(n) => Ok(Value::F64(-n)),
-                // Handle unsigned types by converting to signed
-                Value::U8(n) => Ok(Value::I16(-(*n as i16))),
-                Value::U16(n) => Ok(Value::I32(-(*n as i32))),
-                Value::U32(n) => Ok(Value::I64(-(*n as i64))),
-                Value::U64(n) => Ok(Value::I128(-(*n as i128))),
-                _ => Err(RuntimeError {
-                    message: format!("Unary minus not supported for type {:?}", val),
-                }),
-            },
+            UnaryOperator::Minus => impl_unary_op!(val, -, signed_only),
             UnaryOperator::Not => match val {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 _ => Err(RuntimeError {
@@ -550,63 +371,14 @@ impl Interpreter {
         }
     }
 
-    fn cast_value(&self, val: &Value, target_type: &Type) -> Result<Value, RuntimeError> {
-        // First try the built-in cast_to method from Value
+    fn cast_value(&self, val: &Value, target_type: &Type) -> Result<Value> {
+        // First try the built-in cast_to method
         if let Some(casted) = val.cast_to(target_type) {
             return Ok(casted);
         }
         
-        // Handle additional casting cases
-        match (val, target_type) {
-            // Integer conversions (potentially lossy)
-            (Value::I16(n), Type::I8) => Ok(Value::I8(*n as i8)),
-            (Value::I32(n), Type::I8) => Ok(Value::I8(*n as i8)),
-            (Value::I32(n), Type::I16) => Ok(Value::I16(*n as i16)),
-            (Value::I64(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            (Value::I128(n), Type::I64) => Ok(Value::I64(*n as i64)),
-            
-            // Unsigned integer conversions
-            (Value::U16(n), Type::U8) => Ok(Value::U8(*n as u8)),
-            (Value::U32(n), Type::U8) => Ok(Value::U8(*n as u8)),
-            (Value::U32(n), Type::U16) => Ok(Value::U16(*n as u16)),
-            (Value::U64(n), Type::U32) => Ok(Value::U32(*n as u32)),
-            (Value::U128(n), Type::U64) => Ok(Value::U64(*n as u64)),
-            
-            // Unsigned to signed conversions
-            (Value::U8(n), Type::I8) => Ok(Value::I8(*n as i8)),
-            (Value::U8(n), Type::I16) => Ok(Value::I16(*n as i16)),
-            (Value::U8(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            (Value::U16(n), Type::I16) => Ok(Value::I16(*n as i16)),
-            (Value::U16(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            (Value::U32(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            
-            // Float conversions
-            (Value::F64(n), Type::F32) => Ok(Value::F32(*n as f32)),
-            (Value::F32(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            (Value::F64(n), Type::I32) => Ok(Value::I32(*n as i32)),
-            (Value::I32(n), Type::F32) => Ok(Value::F32(*n as f32)),
-            (Value::I32(n), Type::F64) => Ok(Value::F64(*n as f64)),
-            (Value::U8(n), Type::F32) => Ok(Value::F32(*n as f32)),
-            (Value::U16(n), Type::F32) => Ok(Value::F32(*n as f32)),
-
-            //usize conversion
-            (Value::Usize(n), Type::Usize) => Ok(Value::Usize(*n as usize)),
-            
-            // Boolean conversions
-            (Value::Bool(b), Type::I32) => Ok(Value::I32(if *b { 1 } else { 0 })),
-            (Value::I32(n), Type::Bool) => Ok(Value::Bool(*n != 0)),
-            
-            // String conversions
-            (val, Type::String) => Ok(Value::String(val.to_string())),
-            
-            _ => Err(RuntimeError {
-                message: format!("Cannot cast {:?} to {:?}", val, target_type),
-            }),
-        }
-    }
-
-    fn value_to_string(&self, val: &Value) -> String {
-        val.to_string()
+        // Use our macro for comprehensive casting
+        impl_all_upcasts!(val, target_type)
     }
 }
 
@@ -616,23 +388,6 @@ trait Truthy {
 
 impl Truthy for Value {
     fn is_truthy(&self) -> bool {
-        match self {
-            Value::Bool(b) => *b,
-            Value::I8(n) => *n != 0,
-            Value::I16(n) => *n != 0,
-            Value::I32(n) => *n != 0,
-            Value::I64(n) => *n != 0,
-            Value::I128(n) => *n != 0,
-            Value::U8(n) => *n != 0,
-            Value::U16(n) => *n != 0,
-            Value::U32(n) => *n != 0,
-            Value::U64(n) => *n != 0,
-            Value::U128(n) => *n != 0,
-            Value::F32(n) => *n != 0.0,
-            Value::F64(n) => *n != 0.0,
-            Value::Usize(n) => *n != 0,
-            Value::Str(s) => !s.is_empty(),
-            Value::String(s) => !s.is_empty(),
-        }
+        is_truthy!(self)
     }
 }

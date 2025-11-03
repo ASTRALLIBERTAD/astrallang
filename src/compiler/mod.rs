@@ -3,8 +3,12 @@ pub mod parser;
 pub mod ast;
 pub mod interpreter;
 pub mod semantic;
-pub mod value;
 pub mod builtins;
+
+pub mod types;
+
+#[macro_use]
+pub mod macros;
 
 pub use ast::*;
 pub use lexer::Lexer;

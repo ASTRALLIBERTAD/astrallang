@@ -8,6 +8,22 @@ fn main() {
     let k = to_string(y);
     print(k);
     cow("jake", r);
+
+
+    let x: i32 = 10;
+    let y: i32 = 20;
+    let sum = x + y;
+    
+    print(to_string(sum));
+    print(count_len("hello"));
+    
+    let result = match x {
+        10 => "ten",
+        20 => "twenty",
+        _ => "other",
+    };
+    
+    print(result);
        
 }
 
@@ -37,3 +53,5 @@ fn boy(name: string) {
     print("billy r " + to_string(u));
     let y = "fff";
 }
+
+
