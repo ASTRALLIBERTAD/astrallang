@@ -1,131 +1,114 @@
-mod compiler;
-
-use compiler::lexer::Lexer;
-use compiler::parser::Parser;
-use compiler::interpreter::Interpreter;
-// use compiler::android_compiler::AndroidCompiler;
+use std::env;
 use std::fs;
 use std::process;
-use std::env;
+
+mod lexer;
+mod parser;
+mod semantic;
+mod codegen;
+
+use lexer::Lexer;
+use parser::Parser;
+use semantic::SemanticAnalyzer;
+use codegen::CodeGenerator;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
+    
     if args.len() < 2 {
-        eprintln!("Usage: {} <filename.astral> [--android] [--object] [--run-android] [--llvm] [--interpreter] [--compile]", args[0]);
-        eprintln!("Options:");
-        eprintln!("  --android     Generate LLVM IR for Android target");
-        eprintln!("  --object      Compile directly to Android object file");
-        eprintln!("  --run-android Compile and run on connected Android device");
-        eprintln!("  --llvm        Generate LLVM IR for desktop");
-        eprintln!("  --interpreter Run using interpreter");
+        eprintln!("Usage: {} <input.brn> [output]", args[0]);
+        eprintln!("Example: {} main.brn", args[0]);
         process::exit(1);
     }
+    
+    let input_file = &args[1];
+    let output_file = if args.len() > 2 {
+        args[2].clone()
+    } else {
+        input_file.trim_end_matches(".brn").to_string()
+    };
+    
+    compile_file(input_file, &output_file);
+}
 
-    let filename = &args[1];
-    let source = match fs::read_to_string(filename) {
+fn compile_file(input_file: &str, output_file: &str) {
+    println!("Compiling {}...", input_file);
+    
+    // Read source file
+    let source = match fs::read_to_string(input_file) {
         Ok(content) => content,
         Err(e) => {
-            eprintln!("Failed to read file '{}': {}", filename, e);
+            eprintln!("Error: Could not read file '{}': {}", input_file, e);
             process::exit(1);
         }
     };
-
-    let mut lexer = Lexer::new(&source);
+    
+    // Step 1: Lexical Analysis
+    println!("  [1/4] Lexical analysis...");
+    let mut lexer = Lexer::new(&source, input_file);
     let tokens = match lexer.tokenize() {
         Ok(tokens) => tokens,
         Err(e) => {
-            eprintln!("Lexer Error: {}", e);
+            eprintln!("{}", e);
             process::exit(1);
         }
     };
-
-    let mut parser = Parser::new(tokens);
+    
+    // Step 2: Parsing
+    println!("  [2/4] Parsing...");
+    let mut parser = Parser::new(tokens, input_file);
     let ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
-            eprintln!("Parser Error: {}", e);
+            eprintln!("{}", e);
             process::exit(1);
         }
     };
-
-    // if args.contains(&"--llvm".to_string()) {
-    //     use compiler::llvm::compile_to_llvm;
-    //     let llvm_ir = match compile_to_llvm(&ast) {
-    //         Ok(ir) => ir,
-    //         Err(e) => {
-    //             eprintln!("LLVM Codegen Error: {}", e);
-    //             process::exit(1);
-    //         }
-    //     };
-    //     let llvm_file = filename.replace(".astral", ".ll");
-    //     if let Err(e) = fs::write(&llvm_file, llvm_ir) {
-    //         eprintln!("Failed to write LLVM IR file '{}': {}", llvm_file, e);
-    //         process::exit(1);
-    //     }
-    //     println!("LLVM IR written to: {}", llvm_file);
-    // }
-
-    // if args.contains(&"--android".to_string()) {
-    //     use compiler::llvm_android::compile_to_llvm_android;
-    //     let llvm_ir = match compile_to_llvm_android(&ast) {
-    //         Ok(ir) => ir,
-    //         Err(e) => {
-    //             eprintln!("LLVM Codegen Error: {}", e);
-    //             process::exit(1);
-    //         }
-    //     };
-    //     let llvm_file = filename.replace(".astral", "_android.ll");
-    //     if let Err(e) = fs::write(&llvm_file, llvm_ir) {
-    //         eprintln!("Failed to write LLVM IR file '{}': {}", llvm_file, e);
-    //         process::exit(1);
-    //     }
-    //     println!("✅ Android LLVM IR written to: {}", llvm_file);
-    // }
-
-    // if args.contains(&"--run-android".to_string()) {
-    //     let ndk_path = match env::var("ANDROID_NDK_ROOT") {
-    //         Ok(p) => p,
-    //         Err(_) => {
-    //             eprintln!("ANDROID_NDK_ROOT is not set");
-    //             process::exit(1);
-    //         }
-    //     };
-    //     let compiler = AndroidCompiler::new(ndk_path, 35);
-    //     match compiler.compile_and_run_on_device(&source, None) {
-    //         Ok(output) => println!("{}", output),
-    //         Err(e) => {
-    //             eprintln!("Failed to run on Android: {}", e);
-    //             process::exit(1);
-    //         }
-    //     }
-    // }
-
-    if args.contains(&"--interpreter".to_string()) || (!args.contains(&"--compile".to_string()) && !args.contains(&"--llvm".to_string()) && !args.contains(&"--android".to_string())) {
-        let mut interpreter = Interpreter::new();
-        print!("{:#?}", ast);
-        if let Err(e) = interpreter.run(&ast) {
-            eprintln!("Runtime Error: {}", e);
-            process::exit(1);
-        }
+    
+    // Step 3: Semantic Analysis (Ownership & Memory Safety)
+    println!("  [3/4] Semantic analysis (ownership checking)...");
+    let mut analyzer = SemanticAnalyzer::new(input_file);
+    if let Err(e) = analyzer.analyze(&ast) {
+        eprintln!("{}", e);
+        process::exit(1);
     }
-
-    if args.contains(&"--compile".to_string()) {
-        if let Some(main_func) = ast.iter().find_map(|stmt| {
-            if let compiler::ast::Stmt::Function(func) = stmt {
-                if func.name == "main" {
-                    Some(func)
-                } else {
-                    None
-                }
+    
+    // Step 4: Code Generation
+    println!("  [4/4] Code generation...");
+    let mut codegen = CodeGenerator::new();
+    let llvm_ir = codegen.generate(&ast);
+    
+    // Write LLVM IR to file
+    let ll_file = format!("{}.ll", output_file);
+    if let Err(e) = fs::write(&ll_file, llvm_ir) {
+        eprintln!("Error writing LLVM IR: {}", e);
+        process::exit(1);
+    }
+    
+    println!("  Generated LLVM IR: {}", ll_file);
+    
+    // Compile LLVM IR to executable using clang
+    println!("  Linking to executable: {}", output_file);
+    let output = process::Command::new("clang")
+        .arg(&ll_file)
+        .arg("-o")
+        .arg(output_file)
+        .output();
+    
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                println!("✓ Successfully compiled to: {}", output_file);
             } else {
-                None
+                eprintln!("Error during linking:");
+                eprintln!("{}", String::from_utf8_lossy(&result.stderr));
+                process::exit(1);
             }
-        }) {
-            println!("Main function found. Compilation placeholder executed.");
-        } else {
-            eprintln!("No main function found for compilation");
-            process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: clang not found. {}", e);
+            println!("LLVM IR saved to: {}", ll_file);
+            println!("You can compile manually with: clang {} -o {}", ll_file, output_file);
         }
     }
 }
