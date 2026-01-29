@@ -1,0 +1,99 @@
+fn is_digit_char(ch: int) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn parse_number(source: string, pos: int) -> int {
+    puts("Parsing NUMBER");
+    let ch: int = source.char_at(pos);
+    if is_digit_char(ch) {
+        return pos + 1;
+    }
+    puts("ERROR: Expected number");
+    return pos;
+}
+
+fn parse_primary(source: string, pos: int) -> int {
+    let ch: int = source.char_at(pos);
+
+    if ch == 40 {
+        puts("Parsing: (expression)");
+        let mut new_pos: int = pos + 1;
+        new_pos = parse_expression(source, new_pos);
+        let close: int = source.char_at(new_pos);
+        if close == 41 {
+            return new_pos + 1;
+        }
+        puts("ERROR: Expected )");
+        return new_pos;
+    }
+
+    return parse_number(source, pos);
+}
+
+fn parse_term(source: string, pos: int) -> int {
+    let mut current: int = parse_primary(source, pos);
+
+    let mut keep_going: bool = true;
+    let mut ch: int = source.char_at(current);
+    while ch != 0 && (ch == 42 || ch == 47) {
+        if ch == 42 {
+            puts("Parsing: * operator");
+            current = current + 1;
+            current = parse_primary(source, current);
+        } else if ch == 47 {
+            puts("Parsing: / operator");
+            current = current + 1;
+            current = parse_primary(source, current);
+        }
+        ch = source.char_at(current); 
+    }
+    return current;
+}
+
+fn parse_expression(source: string, pos: int) -> int {
+    let mut current: int = parse_term(source, pos);
+
+    let mut keep_going: bool = true;
+    let mut ch: int = source.char_at(current);
+    while ch != 0 && (ch == 43 || ch == 45) {
+        if ch == 43 {
+            puts("Parsing: + operator");
+            current = current + 1;
+            current = parse_term(source, current);
+        } else if ch == 45 {
+            puts("Parsing: - operator");
+            current = current + 1;
+            current = parse_term(source, current);
+        }
+        ch = source.char_at(current); 
+    }
+    return current;
+}
+
+fn main() -> int {
+    puts("=== BRN PARSER v1.0 ===");
+    puts("");
+
+    puts("Test 1: Simple number");
+    let test1: string = "5";
+    parse_expression(test1, 0);
+    puts("");
+
+    puts("Test 2: Addition");
+    let test2: string = "1+2";
+    parse_expression(test2, 0);
+    puts("");
+
+    puts("Test 3: With precedence");
+    let test3: string = "1+2*3";
+    parse_expression(test3, 0);
+    puts("");
+
+    puts("Test 4: Parentheses");
+    let test4: string = "(1+2)*3";
+    parse_expression(test4, 0);
+    puts("");
+
+    puts("Parsing complete!");
+    return 0;
+}
