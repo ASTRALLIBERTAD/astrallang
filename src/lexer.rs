@@ -205,7 +205,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     TokenType::Or
                 } else {
-                    return Err(format!("{}:{}:{}: Unexpected character: '|'", self.filename, line, column));
+                    return Err(self.error_with_context("Unexpected character '|' (did you mean '||'?)"));
                 }
             }
             '(' => {
@@ -258,10 +258,7 @@ impl<'a> Lexer<'a> {
             _ if ch.is_ascii_digit() => self.read_number(),
             _ if ch.is_alphabetic() || ch == '_' => self.read_identifier(),
             _ => {
-                return Err(format!(
-                    "{}:{}:{}: Unexpected character: '{}'",
-                    self.filename, line, column, ch
-                ));
+                return Err(self.error_with_context(&format!("Unexpected character '{}'", ch)));
             }
         };
         
@@ -273,18 +270,13 @@ impl<'a> Lexer<'a> {
     }
     
     fn read_string(&mut self) -> Result<TokenType, String> {
-        let line = self.line;
-        let column = self.column;
         
         self.advance();
         let mut value = String::new();
         
         while !self.is_at_end() && self.peek() != '"' {
             if self.peek() == '\n' {
-                return Err(format!(
-                    "{}:{}:{}: Unterminated string literal",
-                    self.filename, line, column
-                ));
+                return Err(self.error_with_context("Unterminated string literal (strings cannot span multiple lines)"));
             }
             if self.peek() == '\\' {
                 self.advance();
@@ -304,10 +296,7 @@ impl<'a> Lexer<'a> {
         }
         
         if self.is_at_end() {
-            return Err(format!(
-                "{}:{}:{}: Unterminated string literal",
-                self.filename, line, column
-            ));
+            return Err(self.error_with_context("Unterminated string literal (missing closing quote)"));
         }
         
         self.advance();
@@ -315,13 +304,11 @@ impl<'a> Lexer<'a> {
     }
     
     fn read_char(&mut self) -> Result<TokenType, String> {
-        let line = self.line;
-        let column = self.column;
         
         self.advance();
         
         if self.is_at_end() {
-            return Err(format!("{}:{}:{}: Unterminated char literal", self.filename, line, column));
+            return Err(self.error_with_context("Unterminated character literal"));
         }
         
         let ch = if self.peek() == '\\' {
@@ -332,7 +319,7 @@ impl<'a> Lexer<'a> {
                 'r' => '\r',
                 '\\' => '\\',
                 '\'' => '\'',
-                _ => return Err(format!("{}:{}:{}: Invalid escape sequence", self.filename, line, column)),
+                _ => return Err(self.error_with_context(&format!("Invalid escape sequence '\\{}' in character literal", self.peek()))),
             }
         } else {
             self.peek()
@@ -341,7 +328,7 @@ impl<'a> Lexer<'a> {
         self.advance();
         
         if self.peek() != '\'' {
-            return Err(format!("{}:{}:{}: Unterminated char literal", self.filename, line, column));
+            return Err(self.error_with_context("Unterminated character literal (expected closing quote)"));
         }
         
         self.advance();
@@ -415,6 +402,78 @@ impl<'a> Lexer<'a> {
             }
         }
     }
+
+    fn error_with_context(&self, message: &str) -> String {
+        let lines: Vec<&str> = self.source.lines().collect();
+        let current_line = lines.get(self.line - 1).unwrap_or(&"");
+
+        let line_num_width = self.line.to_string().len().max(3);
+
+        let mut error = String::new();
+
+        // Header: filename:line:column: error message
+        error.push_str(&format!(
+            "\x1b[1m\x1b[31merror\x1b[0m: {}\n",
+            message
+        ));
+
+        error.push_str(&format!(
+            "  \x1b[1m\x1b[34m-->\x1b[0m {}:{}:{}\n",
+            self.filename, self.line, self.column
+        ));
+
+        error.push_str(&format!(
+            "{:width$} \x1b[1m\x1b[34m|\x1b[0m\n",
+            "",
+            width = line_num_width
+        ));
+
+        // Show previous line for context (if exists)
+        if self.line > 1 {
+            if let Some(prev_line) = lines.get(self.line - 2) {
+                error.push_str(&format!(
+                    "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
+                    self.line - 1,
+                    prev_line,
+                    width = line_num_width
+                ));
+            }
+        }
+
+        // Current line with error
+        error.push_str(&format!(
+            "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
+            self.line,
+            current_line,
+            width = line_num_width
+        ));
+
+        error.push_str(&format!(
+            "{:width$} \x1b[1m\x1b[34m|\x1b[0m {}\x1b[1m\x1b[31m^\x1b[0m\n",
+            "",
+            " ".repeat(self.column - 1),
+            width = line_num_width
+        ));
+
+        if let Some(next_line) = lines.get(self.line) {
+            error.push_str(&format!(
+                "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
+                self.line + 1,
+                next_line,
+                width = line_num_width
+            ));
+        }
+
+        error.push_str(&format!(
+            "{:width$} \x1b[1m\x1b[34m|\x1b[0m\n",
+            "",
+            width = line_num_width
+        ));
+
+        error
+    }
+
+    
     
     fn peek(&self) -> char {
         if self.is_at_end() {
