@@ -687,7 +687,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison(&mut self) -> Result<AstNode, String> {
-        let mut left = self.parse_term()?;
+        let mut left = self.parse_additive()?;
 
         while matches!(
             self.peek().token_type,
@@ -726,13 +726,19 @@ impl<'a> Parser<'a> {
                 _ => unreachable!(),
             };
 
-            let right = self.parse_term()?;
+            let right = self.parse_additive()?;
             left = AstNode::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+
+        Ok(left)
+    }
+
+    fn parse_additive(&mut self) -> Result<AstNode, String> {
+        let mut left = self.parse_term()?;
 
         while self.check(&TokenType::Plus) || self.check(&TokenType::Minus) {
             let op = if self.check(&TokenType::Plus) {
