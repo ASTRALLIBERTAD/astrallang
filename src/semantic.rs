@@ -1,4 +1,4 @@
-use crate::parser::{AstNode, BinOp, Parameter};
+use crate::parser::{AstNode, BinOp, Parameter, Location};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -7,6 +7,7 @@ struct VarInfo {
     borrow_count: usize,
     is_mutable: bool,
     declared_line: usize,
+    declared_column: usize,
     var_type: String,
 }
 
@@ -14,6 +15,7 @@ pub struct SemanticAnalyzer<'a> {
     filename: &'a str,
     symbol_table: Vec<HashMap<String, VarInfo>>,
     current_line: usize,
+    current_column: usize,
     in_loop: bool,
 }
 
@@ -22,14 +24,15 @@ impl<'a> SemanticAnalyzer<'a> {
         SemanticAnalyzer {
             filename,
             symbol_table: vec![HashMap::new()],
-            current_line: 0,
+            current_line: 1,
+            current_column: 1,
             in_loop: false,
         }
     }
 
     fn is_copy_type(&self, name: &str) -> bool {
         if let Some(info) = self.lookup_variable(name) {
-            matches!(info.var_type.as_str(), "int" | "bool" | "char" | "string")
+            matches!(info.var_type.as_str(), "int" | "bool" | "char")
         } else {
             false
         }
@@ -52,10 +55,17 @@ impl<'a> SemanticAnalyzer<'a> {
                 self.push_scope();
 
                 for param in params {
+                    let is_mutable = if param.is_reference {
+                        param.is_mutable
+                    } else {
+                        param.is_mutable
+                    };
+
                     self.declare_variable(
                         &param.name,
-                        !param.is_reference,
+                        is_mutable,
                         param.param_type.clone(),
+                        0,
                         0,
                     );
                 }
@@ -65,10 +75,13 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::LetBinding { mutable, name, value, type_annotation } => {
+            AstNode::LetBinding { mutable, name, value, type_annotation, location } => {
+                self.current_line = location.line;
+                self.current_column = location.column;
+
                 self.visit(value)?;
 
-                if let AstNode::Identifier(var_name) = value.as_ref() {
+                if let AstNode::Identifier { name: var_name, .. } = value.as_ref() {
                     self.check_not_consumed(var_name)?;
                     self.consume_variable(var_name)?;
                 }
@@ -77,21 +90,37 @@ impl<'a> SemanticAnalyzer<'a> {
                     self.infer_type(value)
                 });
 
-                self.declare_variable(name, *mutable, var_type, self.current_line);
+                self.declare_variable(name, *mutable, var_type, location.line, location.column);
                 Ok(())
             }
 
-            AstNode::Assignment { name, value } => {
+            AstNode::Assignment { name, value, location } => {
+                self.current_line = location.line;
+                self.current_column = location.column;
+
+                self.check_variable_exists(name)?;
                 self.check_not_consumed(name)?;
                 self.check_is_mutable(name)?;
                 self.check_not_borrowed(name)?;
                 self.visit(value)?;
 
-                if let AstNode::Identifier(var_name) = value.as_ref() {
+                if let AstNode::Identifier { name: var_name, .. } = value.as_ref() {
                     self.check_not_consumed(var_name)?;
                     self.consume_variable(var_name)?;
                 }
 
+                Ok(())
+            }
+
+            AstNode::ArrayAssignment { array, index, value, location } => {
+                self.current_line = location.line;
+                self.current_column = location.column;
+
+                self.check_variable_exists(array)?;
+                self.check_not_consumed(array)?;
+                self.check_is_mutable(array)?;
+                self.visit(index)?;
+                self.visit(value)?;
                 Ok(())
             }
 
@@ -126,8 +155,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 self.visit(iterator)?;
                 self.push_scope();
 
-                // Declare loop variable
-                self.declare_variable(variable, false, "int".to_string(), self.current_line);
+                self.declare_variable(variable, false, "int".to_string(), self.current_line, self.current_column);
 
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
@@ -157,7 +185,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 if !self.in_loop {
                     return Err(format!(
                         "{}:{}:{}: Error: 'break' outside of loop",
-                        self.filename, self.current_line, 0
+                        self.filename, self.current_line, self.current_column
                     ));
                 }
                 Ok(())
@@ -167,7 +195,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 if !self.in_loop {
                     return Err(format!(
                         "{}:{}:{}: Error: 'continue' outside of loop",
-                        self.filename, self.current_line, 0
+                        self.filename, self.current_line, self.current_column
                     ));
                 }
                 Ok(())
@@ -180,12 +208,12 @@ impl<'a> SemanticAnalyzer<'a> {
                 self.visit(right)?;
 
                 if matches!(op, BinOp::Add) {
-                    if let AstNode::Identifier(var) = left.as_ref() {
+                    if let AstNode::Identifier { name: var, .. } = left.as_ref() {
                         if self.get_type(var) == Some("string") {
                             self.consume_variable(var)?;
                         }
                     }
-                    if let AstNode::Identifier(var) = right.as_ref() {
+                    if let AstNode::Identifier { name: var, .. } = right.as_ref() {
                         if self.get_type(var) == Some("string") {
                             self.consume_variable(var)?;
                         }
@@ -200,13 +228,17 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::Identifier(name) => {
+            AstNode::Identifier { name, location } => {
+                self.current_line = location.line;
+                self.current_column = location.column;
+
+                self.check_variable_exists(name)?;
                 self.check_not_consumed(name)?;
                 Ok(())
             }
 
             AstNode::Reference(expr) => {
-                if let AstNode::Identifier(var_name) = expr.as_ref() {
+                if let AstNode::Identifier { name: var_name, .. } = expr.as_ref() {
                     self.check_not_consumed(var_name)?;
                     self.borrow_variable(var_name)?;
                 }
@@ -214,17 +246,20 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::Call { args, .. } => {
-                for arg in args {
-                    self.visit(arg)?;
-
-                    if let AstNode::Identifier(var_name) = arg {
-                        self.check_not_consumed(var_name)?;
-                        self.consume_variable(var_name)?;
-                    }
+            AstNode::Call { name: _, args } => {
+                for arg in args.iter() {
                     if let AstNode::Reference(ref_expr) = arg {
-                        if let AstNode::Identifier(var_name) = ref_expr.as_ref() {
+                        if let AstNode::Identifier { name: var_name, .. } = ref_expr.as_ref() {
                             self.check_not_consumed(var_name)?;
+                            self.borrow_variable(var_name)?;
+                        }
+                    } else {
+                        self.visit(arg)?;
+                        if let AstNode::Identifier { name: var_name, .. } = arg {
+                            if !self.is_copy_type(var_name) {
+                                self.check_not_consumed(var_name)?;
+                                self.consume_variable(var_name)?;
+                            }
                         }
                     }
                 }
@@ -278,7 +313,7 @@ impl<'a> SemanticAnalyzer<'a> {
         }
     }
 
-    fn declare_variable(&mut self, name: &str, mutable: bool, var_type: String, line: usize) {
+    fn declare_variable(&mut self, name: &str, mutable: bool, var_type: String, line: usize, column: usize) {
         let scope = self.symbol_table.last_mut().unwrap();
         scope.insert(
             name.to_string(),
@@ -287,13 +322,23 @@ impl<'a> SemanticAnalyzer<'a> {
                 borrow_count: 0,
                 is_mutable: mutable,
                 declared_line: line,
+                declared_column: column,
                 var_type,
             },
         );
     }
 
+    fn check_variable_exists(&self, name: &str) -> Result<(), String> {
+        if self.lookup_variable(name).is_none() {
+            return Err(format!(
+                "{}:{}:{}: Error: cannot find value '{}' in this scope",
+                self.filename, self.current_line, self.current_column, name
+            ));
+        }
+        Ok(())
+    }
+
     fn check_not_consumed(&self, name: &str) -> Result<(), String> {
-        // Skip move checking for Copy types
         if self.is_copy_type(name) {
             return Ok(());
         }
@@ -304,7 +349,7 @@ impl<'a> SemanticAnalyzer<'a> {
                     "{}:{}:{}: Error: use of moved value '{}'
     Note: value moved at line {}, cannot be used again
     Help: Consider borrowing '&{}' to keep ownership in the current scope",
-                    self.filename, self.current_line, 0, name, info.declared_line, name
+                    self.filename, self.current_line, self.current_column, name, info.declared_line, name
                 ));
             }
         }
@@ -317,7 +362,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 return Err(format!(
                     "{}:{}:{}: Error: cannot assign to immutable variable '{}'
 Help: Consider declaring with 'let mut {}'",
-                    self.filename, self.current_line, 0, name, name
+                    self.filename, self.current_line, self.current_column, name, name
                 ));
             }
         }
@@ -330,7 +375,7 @@ Help: Consider declaring with 'let mut {}'",
                 return Err(format!(
                     "{}:{}:{}: Error: cannot move '{}' while borrowed
 Note: {} active borrow(s) exist",
-                    self.filename, self.current_line, 0, name, info.borrow_count
+                    self.filename, self.current_line, self.current_column, name, info.borrow_count
                 ));
             }
         }
@@ -338,7 +383,6 @@ Note: {} active borrow(s) exist",
     }
 
     fn consume_variable(&mut self, name: &str) -> Result<(), String> {
-        // Skip consuming Copy types
         if self.is_copy_type(name) {
             return Ok(());
         }
@@ -348,7 +392,7 @@ Note: {} active borrow(s) exist",
                 if info.borrow_count > 0 {
                     return Err(format!(
                         "{}:{}:{}: Error: cannot move '{}' while borrowed",
-                        self.filename, self.current_line, 0, name
+                        self.filename, self.current_line, self.current_column, name
                     ));
                 }
                 info.is_consumed = true;
@@ -387,7 +431,7 @@ Note: {} active borrow(s) exist",
             AstNode::Boolean(_) => "bool".to_string(),
             AstNode::Character(_) => "char".to_string(),
             AstNode::StringLit(_) => "string".to_string(),
-            AstNode::Identifier(name) => {
+            AstNode::Identifier { name, .. } => {
                 self.get_type(name).unwrap_or("unknown").to_string()
             }
             AstNode::BinaryOp { left, .. } => self.infer_type(left),
